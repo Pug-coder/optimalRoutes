@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=42.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.poetry]
+name = "optimal-routes"
+version = "0.1.0"
+description = "Web application for optimal delivery route planning"
+authors = ["Sukhanov Andrew <sukhanov.a.s22@yandex.ru>"]
+
+readme = "README.md"
+package-mode = false
+
+
+[tool.poetry.dependencies]
+python = "^3.12"
+fastapi = "^0.111.0"
+uvicorn = {extras = ["standard"], version = "^0.29.0"}
+pydantic = {extras = ["email"], version = "^2.7.1"}
+pydantic-settings = "^2.2.1"
+sqlalchemy = {extras = ["asyncio"], version = "^2.0.30"}
+asyncpg = "^0.29.0"
+alembic = "^1.13.1"
+gunicorn = "^23.0.0"
+aiosmtplib = "^3.0.2"
+taskiq = "^0.11.11"
+taskiq-aio-pika = "^0.4.1"
+
+[tool.poetry.group.dev.dependencies]
+black = "^24.4.2"
+
+[tool.black]
+line-length = 88
+target-version = ['py312']
+include = '\.pyi?$' 
