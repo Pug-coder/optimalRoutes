@@ -48,27 +48,36 @@ L.Polyline.fromEncoded = function(encoded, options) {
   var index = 0, len = encoded.length;
   var lat = 0, lng = 0;
 
-  while (index < len) {
-    var b, shift = 0, result = 0;
-    do {
-      b = encoded.charAt(index++).charCodeAt(0) - 63;
-      result |= (b & 0x1f) << shift;
-      shift += 5;
-    } while (b >= 0x20);
-    var dlat = ((result & 1) ? ~(result >> 1) : (result >> 1));
-    lat += dlat;
+  try {
+    while (index < len) {
+      var b, shift = 0, result = 0;
+      do {
+        b = encoded.charAt(index++).charCodeAt(0) - 63;
+        result |= (b & 0x1f) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      var dlat = ((result & 1) ? ~(result >> 1) : (result >> 1));
+      lat += dlat;
 
-    shift = 0;
-    result = 0;
-    do {
-      b = encoded.charAt(index++).charCodeAt(0) - 63;
-      result |= (b & 0x1f) << shift;
-      shift += 5;
-    } while (b >= 0x20);
-    var dlng = ((result & 1) ? ~(result >> 1) : (result >> 1));
-    lng += dlng;
+      shift = 0;
+      result = 0;
+      do {
+        b = encoded.charAt(index++).charCodeAt(0) - 63;
+        result |= (b & 0x1f) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      var dlng = ((result & 1) ? ~(result >> 1) : (result >> 1));
+      lng += dlng;
 
-    points.push(L.latLng([lat * 1e-5, lng * 1e-5]));
+      // Проверяем, что координаты валидны
+      if (!isNaN(lat * 1e-5) && !isNaN(lng * 1e-5) &&
+          lat * 1e-5 >= -90 && lat * 1e-5 <= 90 &&
+          lng * 1e-5 >= -180 && lng * 1e-5 <= 180) {
+        points.push(L.latLng([lat * 1e-5, lng * 1e-5]));
+      }
+    }
+  } catch (e) {
+    console.error('Error decoding polyline:', e);
   }
 
   return L.polyline(points, options || {});
@@ -84,6 +93,27 @@ L.Icon.Default.mergeOptions({
   iconUrl: require('leaflet/dist/images/marker-icon.png'),
   shadowUrl: require('leaflet/dist/images/marker-shadow.png')
 })
+
+// Расширяем прототип Polyline для безопасной анимации
+const originalSnakeIn = L.Polyline.prototype.snakeIn;
+L.Polyline.prototype.snakeIn = function() {
+  try {
+    // Проверяем, что у линии есть валидные точки
+    const points = this.getLatLngs();
+    if (!points || points.length < 2 || points.some(p => isNaN(p.lat) || isNaN(p.lng))) {
+      console.warn('Cannot animate polyline with invalid points');
+      this.setStyle({ opacity: 0.8 }); // Просто показываем линию без анимации
+      return this;
+    }
+    
+    // Вызываем оригинальный метод
+    return originalSnakeIn.call(this);
+  } catch (e) {
+    console.error('Error in snakeIn:', e);
+    this.setStyle({ opacity: 0.8 }); // Просто показываем линию без анимации
+    return this;
+  }
+};
 
 export default {
   name: 'MapView',
@@ -265,19 +295,21 @@ export default {
                 const startMarker = L.marker(routePoints[0], {
                   icon: L.divIcon({
                     className: 'start-marker',
-                    html: `<div style="width: 15px; height: 15px;"></div>`,
-                    iconSize: [15, 15]
+                    html: `<div style="width: 20px; height: 20px; background-color: #4a6cf7; border: 3px solid white; border-radius: 50%;"></div>`,
+                    iconSize: [26, 26]
                   }),
-                  title: 'Старт'
+                  title: 'Старт',
+                  zIndexOffset: 1000
                 });
                 
                 const endMarker = L.marker(routePoints[routePoints.length - 1], {
                   icon: L.divIcon({
                     className: 'end-marker',
-                    html: `<div style="width: 15px; height: 15px;"></div>`,
-                    iconSize: [15, 15]
+                    html: `<div style="width: 20px; height: 20px; background-color: #f74a4a; border: 3px solid white; border-radius: 50%;"></div>`,
+                    iconSize: [26, 26]
                   }),
-                  title: 'Финиш'
+                  title: 'Финиш',
+                  zIndexOffset: 1000
                 });
                 
                 startMarker.bindPopup(`<strong>Начало маршрута</strong><br>Склад: ${depot.name}`);
@@ -287,31 +319,88 @@ export default {
                 this.routeLines.addLayer(endMarker);
                 
                 // Создаем маршрут по дорогам для каждого сегмента
-                for (const segment of segments) {
-                  const roadPoints = await this.getRouteByRoad(segment);
-                  const routeLine = L.polyline(roadPoints, {
-                    color: getRouteColor(index),
-                    weight: 4,
-                    opacity: 0.7
-                  });
-                  
-                  routeLine.bindPopup(`
-                    <strong>Маршрут #${route.id}</strong><br>
-                    Курьер: ${route.courier_id}<br>
-                    Кол-во заказов: ${route.points.length}<br>
-                    Дистанция: ${route.total_distance.toFixed(2)} км
-                  `);
-                  
-                  this.routeLines.addLayer(routeLine);
-                  
-                  // Добавляем анимацию
-                  setTimeout(() => {
-                    try {
-                      routeLine.snakeIn();
-                    } catch (e) {
-                      console.error('Animation error:', e);
+                let errorSegments = 0;
+                for (let i = 0; i < segments.length; i++) {
+                  const segment = segments[i];
+                  try {
+                    // Проверяем валидность сегмента
+                    if (!segment || segment.length !== 2 || 
+                        !Array.isArray(segment[0]) || !Array.isArray(segment[1])) {
+                      throw new Error('Invalid segment format');
                     }
-                  }, 100 * index);
+
+                    const roadPoints = await this.getRouteByRoad(segment);
+                    
+                    // Особая обработка для сегмента возврата в депо
+                    const isReturnSegment = i === segments.length - 1;
+                    
+                    const routeLine = L.polyline(roadPoints, {
+                      color: getRouteColor(index),
+                      weight: isReturnSegment ? 5 : 4, // Делаем линию возврата немного толще
+                      opacity: 0.7,
+                      // Для сегмента возврата в депо добавляем пунктир
+                      dashArray: isReturnSegment ? '10, 10' : null
+                    });
+                    
+                    routeLine.bindPopup(`
+                      <strong>Маршрут #${route.id}</strong><br>
+                      ${isReturnSegment ? '<strong>Возврат в депо</strong><br>' : ''}
+                      Курьер: ${route.courier_id}<br>
+                      Кол-во заказов: ${route.points.length}<br>
+                      Дистанция: ${route.total_distance.toFixed(2)} км
+                    `);
+                    
+                    this.routeLines.addLayer(routeLine);
+                    
+                    // Добавляем анимацию
+                    setTimeout(() => {
+                      if (routeLine) {
+                        routeLine.snakeIn();
+                      }
+                    }, 100 * index + 50 * i);
+                  } catch (error) {
+                    console.error(`Error rendering segment ${i} by road:`, error);
+                    errorSegments += 1;
+                    
+                    // Отображаем этот сегмент как прямую линию при ошибке
+                    const fallbackLine = L.polyline(segment, {
+                      color: getRouteColor(index),
+                      weight: 3,
+                      opacity: 0.7,
+                      dashArray: '5, 10'
+                    });
+                    
+                    // Добавляем информацию, является ли это сегментом возврата в депо
+                    const isReturnSegment = i === segments.length - 1;
+                    
+                    // Если это сегмент возврата, используем более заметный стиль
+                    if (isReturnSegment) {
+                      fallbackLine.setStyle({
+                        weight: 4,
+                        dashArray: '10, 5'
+                      });
+                    }
+                    
+                    fallbackLine.bindPopup(`
+                      <strong>Маршрут #${route.id} (резервный)</strong><br>
+                      ${isReturnSegment ? '<strong>Возврат в депо</strong><br>' : ''}
+                      Курьер: ${route.courier_id}<br>
+                      Сегмент ${i+1}/${segments.length}
+                    `);
+                    
+                    this.routeLines.addLayer(fallbackLine);
+                    
+                    // Добавляем анимацию для резервной линии
+                    setTimeout(() => {
+                      if (fallbackLine) {
+                        fallbackLine.snakeIn();
+                      }
+                    }, 100 * index + 50 * i);
+                  }
+                }
+                
+                if (errorSegments > 0) {
+                  console.warn(`Route #${route.id}: ${errorSegments} segments had rendering errors and were displayed as fallback lines`);
                 }
               } catch (error) {
                 console.error('Error rendering route by road:', error);
@@ -333,14 +422,42 @@ export default {
                 
                 this.routeLines.addLayer(routeLine);
                 
-                // Добавляем анимацию для прямых линий тоже
+                // Добавляем анимацию для прямых линий
                 setTimeout(() => {
-                  try {
+                  if (routeLine) {
                     routeLine.snakeIn();
-                  } catch (e) {
-                    console.error('Animation error:', e);
                   }
                 }, 100 * index);
+                
+                // Выделяем сегмент возврата в депо
+                if (routePoints.length >= 2) {
+                  const returnSegment = [
+                    routePoints[routePoints.length - 2], 
+                    routePoints[routePoints.length - 1]
+                  ];
+                  
+                  const returnLine = L.polyline(returnSegment, {
+                    color: getRouteColor(index),
+                    weight: 4,
+                    opacity: 0.8,
+                    dashArray: '10, 5'
+                  });
+                  
+                  returnLine.bindPopup(`
+                    <strong>Маршрут #${route.id} - Возврат в депо</strong><br>
+                    Курьер: ${route.courier_id}<br>
+                    Резервная линия
+                  `);
+                  
+                  this.routeLines.addLayer(returnLine);
+                  
+                  // Анимируем линию возврата в депо
+                  setTimeout(() => {
+                    if (returnLine) {
+                      returnLine.snakeIn();
+                    }
+                  }, 100 * index + 50);
+                }
               }
             }
           }
@@ -349,25 +466,56 @@ export default {
     },
     // Получение маршрута по реальным дорогам
     async getRouteByRoad(points) {
-      if (points.length < 2) return [];
+      if (!points || points.length < 2) return points;
+      
+      // Проверяем валидность входных координат
+      const validPoints = points.filter(point => 
+        Array.isArray(point) && 
+        point.length === 2 && 
+        !isNaN(point[0]) && !isNaN(point[1]) &&
+        point[0] >= -90 && point[0] <= 90 && 
+        point[1] >= -180 && point[1] <= 180
+      );
+      
+      if (validPoints.length < 2) {
+        console.warn('Not enough valid points for routing');
+        return points;
+      }
       
       try {
         // Формируем строку координат для OSRM API
-        const coordinates = points.map(point => `${point[1]},${point[0]}`).join(';');
+        const coordinates = validPoints.map(point => `${point[1]},${point[0]}`).join(';');
         const response = await axios.get(`${OSRM_API_URL}${coordinates}?overview=full&geometries=polyline`);
         
         if (response.data.code !== 'Ok' || !response.data.routes || !response.data.routes.length) {
           console.error('OSRM error:', response.data);
-          return points; // возвращаем исходные точки в случае ошибки
+          return validPoints; // возвращаем валидные исходные точки в случае ошибки
         }
         
         // Декодируем полилинию из ответа
         const route = response.data.routes[0];
         const polyline = L.Polyline.fromEncoded(route.geometry);
-        return polyline.getLatLngs();
+        const latLngs = polyline.getLatLngs();
+        
+        // Проверяем полученные координаты на валидность
+        const validLatLngs = latLngs.filter(coord => {
+          // Проверяем, что координаты не NaN и находятся в допустимых диапазонах
+          return coord && 
+                 !isNaN(coord.lat) && !isNaN(coord.lng) &&
+                 coord.lat >= -90 && coord.lat <= 90 && 
+                 coord.lng >= -180 && coord.lng <= 180;
+        });
+        
+        // Если после фильтрации осталось слишком мало точек, возвращаем исходные
+        if (validLatLngs.length < 2) {
+          console.warn('OSRM returned too few valid coordinates, using direct line');
+          return validPoints;
+        }
+        
+        return validLatLngs;
       } catch (error) {
         console.error('Error getting route by road:', error);
-        return points; // возвращаем исходные точки в случае ошибки
+        return validPoints; // возвращаем валидные исходные точки в случае ошибки
       }
     },
     async searchLocation() {

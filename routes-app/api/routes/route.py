@@ -22,6 +22,10 @@ class GeneticParams(BaseModel):
     elite_size: Optional[int] = None
 
 
+class RoutingMode(BaseModel):
+    use_real_roads: bool
+
+
 @router.post("/optimize", response_model=List[Route])
 async def optimize_routes():
     """Generate optimal routes for all pending orders using OR-Tools."""
@@ -172,4 +176,22 @@ async def reset_api():
     route_optimizer.reset()
     genetic_optimizer.reset()
     
-    return {"status": "success", "message": "All API data has been reset"} 
+    return {"status": "success", "message": "All API data has been reset"}
+
+
+@router.post("/routing-mode", response_model=dict)
+async def set_routing_mode(mode: RoutingMode):
+    """Set the routing mode (real roads or direct distance)."""
+    route_optimizer.use_real_roads = mode.use_real_roads
+    genetic_optimizer.use_real_roads = mode.use_real_roads
+    
+    return {
+        "success": True, 
+        "message": f"Routing mode set to {'real roads' if mode.use_real_roads else 'direct distance'}"
+    }
+
+
+@router.get("/routing-mode", response_model=RoutingMode)
+async def get_routing_mode():
+    """Get the current routing mode."""
+    return RoutingMode(use_real_roads=route_optimizer.use_real_roads) 

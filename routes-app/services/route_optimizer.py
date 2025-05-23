@@ -2,6 +2,8 @@ from typing import Dict, List, Tuple, Optional
 from uuid import UUID
 import numpy as np
 from datetime import datetime, timedelta
+import requests
+import time
 
 from ortools.constraint_solver import routing_enums_pb2
 from ortools.constraint_solver import pywrapcp
@@ -17,6 +19,8 @@ class RouteOptimizer:
         self.depots: Dict[UUID, Depot] = {}
         self.couriers: Dict[UUID, Courier] = {}
         self.orders: Dict[UUID, Order] = {}
+        self.use_real_roads: bool = True
+        self.osrm_api_url: str = "https://router.project-osrm.org/table/v1/driving/"
         
     def add_depot(self, depot: Depot) -> None:
         """Add a depot to the optimizer."""
@@ -40,16 +44,168 @@ class RouteOptimizer:
         Returns:
             A 2D numpy array with distances between all locations
         """
+        if not self.use_real_roads:
+            # Используем прямые расстояния, как было раньше
+            size = len(locations)
+            matrix = np.zeros((size, size), dtype=np.float64)
+            
+            for i in range(size):
+                for j in range(size):
+                    if i != j:
+                        matrix[i, j] = locations[i].distance_to(locations[j])
+            
+            return matrix
+        else:
+            # Используем OSRM для получения реальных расстояний по дорогам
+            return self._compute_osrm_distance_matrix(locations)
+    
+    def _compute_osrm_distance_matrix(self, locations: List[Location]) -> np.ndarray:
+        """
+        Compute the distance matrix using OSRM API.
+        
+        Args:
+            locations: List of all locations (depots and delivery points)
+            
+        Returns:
+            A 2D numpy array with driving distances between all locations
+        """
         size = len(locations)
         matrix = np.zeros((size, size), dtype=np.float64)
         
-        for i in range(size):
-            for j in range(size):
-                if i != j:
-                    matrix[i, j] = locations[i].distance_to(locations[j])
+        try:
+            # Максимальное количество местоположений в одном запросе
+            batch_size = 100
+            
+            # Если у нас меньше точек, чем максимальный размер пакета, делаем один запрос
+            if size <= batch_size:
+                return self._get_osrm_matrix_batch(locations)
+            
+            # Иначе разбиваем на несколько запросов
+            for i in range(0, size, batch_size):
+                batch_end = min(i + batch_size, size)
+                sources = f"sources={';'.join(str(idx) for idx in range(i, batch_end))}"
+                
+                for j in range(0, size, batch_size):
+                    sub_batch_end = min(j + batch_size, size)
+                    destinations = f"destinations={';'.join(str(idx) for idx in range(j, sub_batch_end))}"
+                    
+                    source_locations = locations[i:batch_end]
+                    destination_locations = locations[j:sub_batch_end]
+                    
+                    sub_matrix = self._get_osrm_matrix_for_locations(source_locations, destination_locations)
+                    
+                    # Копируем значения из подматрицы в основную матрицу
+                    for sub_i, main_i in enumerate(range(i, batch_end)):
+                        for sub_j, main_j in enumerate(range(j, sub_batch_end)):
+                            matrix[main_i, main_j] = sub_matrix[sub_i, sub_j]
+                    
+                    # Добавляем задержку, чтобы не перегружать API
+                    time.sleep(0.2)
+            
+            return matrix
+            
+        except Exception as e:
+            print(f"Error getting OSRM distance matrix: {e}")
+            print("Falling back to direct distance calculation")
+            
+            # В случае ошибки возвращаемся к прямым расстояниям
+            for i in range(size):
+                for j in range(size):
+                    if i != j:
+                        matrix[i, j] = locations[i].distance_to(locations[j])
+            
+            return matrix
+    
+    def _get_osrm_matrix_for_locations(self, source_locations: List[Location], 
+                                      destination_locations: List[Location]) -> np.ndarray:
+        """
+        Get distance matrix for a specific set of source and destination locations.
+        
+        Args:
+            source_locations: List of starting points
+            destination_locations: List of ending points
+            
+        Returns:
+            A 2D numpy array with distances
+        """
+        coordinates = []
+        
+        # Собираем все координаты
+        for loc in source_locations + destination_locations:
+            coordinates.append(f"{loc.longitude},{loc.latitude}")
+        
+        # Формируем URL для запроса
+        coords_str = ";".join(coordinates)
+        source_indices = ";".join(str(i) for i in range(len(source_locations)))
+        dest_indices = ";".join(str(i + len(source_locations)) for i in range(len(destination_locations)))
+        
+        url = f"{self.osrm_api_url}{coords_str}?sources={source_indices}&destinations={dest_indices}"
+        
+        # Делаем запрос
+        response = requests.get(url)
+        
+        if response.status_code != 200:
+            raise Exception(f"OSRM API error: {response.status_code}, {response.text}")
+        
+        # Получаем данные
+        data = response.json()
+        
+        if data.get("code") != "Ok":
+            raise Exception(f"OSRM returned error: {data.get('code')}")
+        
+        # Создаем матрицу расстояний
+        distances = data.get("distances", [])
+        matrix = np.array(distances, dtype=np.float64)
+        
+        # Преобразуем расстояния из метров в километры
+        matrix = matrix / 1000.0
         
         return matrix
-    
+
+    def _get_osrm_matrix_batch(self, locations: List[Location]) -> np.ndarray:
+        """
+        Get a complete distance matrix for all locations in one batch.
+        
+        Args:
+            locations: List of all locations
+            
+        Returns:
+            A 2D numpy array with distances
+        """
+        size = len(locations)
+        
+        # Собираем координаты для запроса
+        coords = []
+        for loc in locations:
+            coords.append(f"{loc.longitude},{loc.latitude}")
+        
+        # Соединяем все координаты
+        coords_str = ";".join(coords)
+        
+        # Формируем URL для запроса
+        url = f"{self.osrm_api_url}{coords_str}"
+        
+        # Делаем запрос
+        response = requests.get(url)
+        
+        if response.status_code != 200:
+            raise Exception(f"OSRM API error: {response.status_code}, {response.text}")
+        
+        # Получаем данные
+        data = response.json()
+        
+        if data.get("code") != "Ok":
+            raise Exception(f"OSRM returned error: {data.get('code')}")
+        
+        # Создаем матрицу расстояний
+        distances = data.get("distances", [])
+        matrix = np.array(distances, dtype=np.float64)
+        
+        # Преобразуем расстояния из метров в километры
+        matrix = matrix / 1000.0
+        
+        return matrix
+        
     def optimize_routes(self) -> List[Route]:
         """
         Solve the MDVRP problem and return optimized routes.
