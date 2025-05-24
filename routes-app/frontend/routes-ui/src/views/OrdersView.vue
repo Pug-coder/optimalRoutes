@@ -19,11 +19,11 @@
         <div class="form-row">
           <div class="form-group">
             <label for="order-lat">Широта</label>
-            <input type="number" id="order-lat" v-model.number="newOrder.lat" step="0.000001">
+            <input type="number" id="order-lat" v-model.number="newOrder.latitude" step="0.000001">
           </div>
           <div class="form-group">
             <label for="order-lng">Долгота</label>
-            <input type="number" id="order-lng" v-model.number="newOrder.lng" step="0.000001">
+            <input type="number" id="order-lng" v-model.number="newOrder.longitude" step="0.000001">
           </div>
         </div>
         <button @click="addOrder" class="btn-primary">Добавить заказ</button>
@@ -58,7 +58,7 @@
             <td>{{ order.id }}</td>
             <td>{{ order.location ? order.location.address : '-' }}</td>
             <td>{{ order.weight }}</td>
-            <td>{{ order.location ? `${order.location.lat}, ${order.location.lng}` : '-' }}</td>
+            <td>{{ order.location ? `${order.location.latitude}, ${order.location.longitude}` : '-' }}</td>
             <td>{{ order.courier_id ? `Курьер #${order.courier_id}` : 'Не распределен' }}</td>
             <td>
               <button @click="deleteOrder(order.id)" class="btn-danger">Удалить</button>
@@ -102,8 +102,8 @@ export default {
       newOrder: {
         address: '',
         weight: 1.0,
-        lat: 55.7558,
-        lng: 37.6173
+        latitude: 55.7558,
+        longitude: 37.6173
       }
     }
   },
@@ -155,8 +155,8 @@ export default {
           weight: parseFloat(this.newOrder.weight),
           items_count: 1,
           location: {
-            lat: parseFloat(this.newOrder.lat),
-            lng: parseFloat(this.newOrder.lng),
+            latitude: parseFloat(this.newOrder.latitude),
+            longitude: parseFloat(this.newOrder.longitude),
             address: this.newOrder.address
           }
         }
@@ -178,8 +178,8 @@ export default {
         this.newOrder = {
           address: '',
           weight: 1.0,
-          lat: 55.7558,
-          lng: 37.6173
+          latitude: 55.7558,
+          longitude: 37.6173
         }
       } catch (error) {
         console.error('Error adding order:', error)
@@ -227,8 +227,8 @@ export default {
         const mockOrders = []
         for (let i = 0; i < numOrders; i++) {
           // Random locations within Moscow area
-          const lat = 55.7558 + (Math.random() - 0.5) * 0.1
-          const lng = 37.6173 + (Math.random() - 0.5) * 0.1
+          const latitude = 55.7558 + (Math.random() - 0.5) * 0.1
+          const longitude = 37.6173 + (Math.random() - 0.5) * 0.1
           
           mockOrders.push({
             customer_name: `Клиент ${i + 1}`,
@@ -236,8 +236,8 @@ export default {
             weight: +(Math.random() * 9.9 + 0.1).toFixed(1), // Random weight between 0.1 and 10
             items_count: Math.floor(Math.random() * 5) + 1, // Random item count between 1 and 5
             location: {
-              lat,
-              lng,
+              latitude: latitude,
+              longitude: longitude,
               address: `Тестовый адрес ${i + 1}`
             }
           })

@@ -16,12 +16,12 @@
         </div>
         <div class="form-row">
           <div class="form-group">
-            <label for="depot-lat">Широта</label>
-            <input type="number" id="depot-lat" v-model.number="newDepot.lat" step="0.000001">
+            <label for="depot-lat">Широта:</label>
+            <input type="number" id="depot-lat" v-model.number="newDepot.latitude" step="0.000001">
           </div>
           <div class="form-group">
-            <label for="depot-lng">Долгота</label>
-            <input type="number" id="depot-lng" v-model.number="newDepot.lng" step="0.000001">
+            <label for="depot-lng">Долгота:</label>
+            <input type="number" id="depot-lng" v-model.number="newDepot.longitude" step="0.000001">
           </div>
         </div>
         <button @click="addDepot" class="btn-primary">Добавить склад</button>
@@ -50,7 +50,7 @@
             <td>{{ depot.id }}</td>
             <td>{{ depot.name }}</td>
             <td>{{ depot.location ? depot.location.address : '-' }}</td>
-            <td>{{ depot.location ? `${depot.location.lat}, ${depot.location.lng}` : '-' }}</td>
+            <td>{{ depot.location ? `${depot.location.latitude}, ${depot.location.longitude}` : '-' }}</td>
             <td>
               <button @click="deleteDepot(depot.id)" class="btn-danger">Удалить</button>
             </td>
@@ -74,8 +74,8 @@ export default {
       newDepot: {
         name: '',
         address: '',
-        lat: 55.7558,
-        lng: 37.6173
+        latitude: 55.7558,
+        longitude: 37.6173
       }
     }
   },
@@ -106,8 +106,8 @@ export default {
         const depotData = {
           name: this.newDepot.name,
           location: {
-            lat: this.newDepot.lat,
-            lng: this.newDepot.lng,
+            latitude: this.newDepot.latitude,
+            longitude: this.newDepot.longitude,
             address: this.newDepot.address
           }
         }
@@ -119,8 +119,8 @@ export default {
         this.newDepot = {
           name: '',
           address: '',
-          lat: 55.7558,
-          lng: 37.6173
+          latitude: 55.7558,
+          longitude: 37.6173
         }
       } catch (error) {
         console.error('Error adding depot:', error)

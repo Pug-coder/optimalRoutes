@@ -195,7 +195,7 @@ export default {
       
       this.depots.forEach(depot => {
         if (depot.location) {
-          const marker = L.marker([depot.location.lat, depot.location.lng], {
+          const marker = L.marker([depot.location.latitude, depot.location.longitude], {
             icon: L.divIcon({
               className: 'depot-marker',
               html: `<div class="depot-icon">D</div>`,
@@ -220,7 +220,7 @@ export default {
           // Определяем цвет маркера в зависимости от статуса заказа
           const markerColor = order.status === 'assigned' ? '#4a6cf7' : '#f74a4a';
           
-          const marker = L.marker([order.location.lat, order.location.lng], {
+          const marker = L.marker([order.location.latitude, order.location.longitude], {
             icon: L.divIcon({
               className: 'order-marker',
               html: `<div class="order-icon" style="background-color: ${markerColor};">O</div>`,
@@ -269,18 +269,18 @@ export default {
             const routePoints = [];
             
             // Добавляем склад в начало маршрута
-            routePoints.push([depot.location.lat, depot.location.lng]);
+            routePoints.push([depot.location.latitude, depot.location.longitude]);
             
             // Добавляем заказы
             for (const point of route.points) {
               const order = this.orders.find(o => o.id === point.order_id);
               if (order && order.location) {
-                routePoints.push([order.location.lat, order.location.lng]);
+                routePoints.push([order.location.latitude, order.location.longitude]);
               }
             }
             
             // Добавляем склад в конец маршрута
-            routePoints.push([depot.location.lat, depot.location.lng]);
+            routePoints.push([depot.location.latitude, depot.location.longitude]);
             
             if (routePoints.length > 1) {
               // Получаем маршрут по дорогам
