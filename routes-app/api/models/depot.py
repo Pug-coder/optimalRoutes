@@ -1,20 +1,20 @@
-from pydantic import BaseModel, Field
-from uuid import UUID, uuid4
+from sqlalchemy import Column, String, ForeignKey, DateTime, func
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
+import uuid
 
-from .location import Location
+from core.database import Base
 
 
-class DepotBase(BaseModel):
-    """Base model for depot locations."""
-    name: str = Field(..., description="Name of the depot")
-    location: Location = Field(..., description="Location of the depot")
+class Depot(Base):
+    __tablename__ = "depots"
     
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String, nullable=False)
+    location_id = Column(String, ForeignKey("locations.id"), nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
     
-class DepotCreate(DepotBase):
-    """Model for creating a new depot."""
-    pass
-
-
-class Depot(DepotBase):
-    """Full depot model with ID."""
-    id: UUID = Field(default_factory=uuid4, description="Unique depot identifier") 
+    # Relationships
+    location = relationship("Location")
+    couriers = relationship("Courier", back_populates="depot")
+    orders = relationship("Order", back_populates="depot") 

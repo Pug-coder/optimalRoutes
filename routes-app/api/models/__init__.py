@@ -1,13 +1,16 @@
 from .location import Location
-from .depot import Depot, DepotCreate, DepotBase
-from .courier import Courier, CourierCreate, CourierBase
-from .order import Order, OrderCreate, OrderBase, OrderStatus
+from .depot import Depot
+from .courier import Courier
+from .order import Order, OrderStatus
 from .route import Route, RoutePoint
 
+# Импортируем все модели для миграций Alembic
 __all__ = [
     "Location",
-    "Depot", "DepotCreate", "DepotBase",
-    "Courier", "CourierCreate", "CourierBase",
-    "Order", "OrderCreate", "OrderBase", "OrderStatus",
-    "Route", "RoutePoint"
+    "Depot",
+    "Courier",
+    "Order",
+    "OrderStatus",
+    "Route",
+    "RoutePoint"
 ] 

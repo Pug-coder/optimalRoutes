@@ -1,49 +1,51 @@
-from datetime import datetime
-from enum import Enum
-from typing import Optional
-from pydantic import BaseModel, Field
-from uuid import UUID, uuid4
+from sqlalchemy import Column, String, Integer, Float, ForeignKey, DateTime, func, Enum
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
+import uuid
+import enum
 
-from .location import Location
+from core.database import Base
 
 
-class OrderStatus(str, Enum):
+class OrderStatus(str, enum.Enum):
     """Enumeration of possible order statuses."""
     PENDING = "pending"
     ASSIGNED = "assigned"
     IN_TRANSIT = "in_transit"
     DELIVERED = "delivered"
-    CANCELED = "canceled"
+    CANCELLED = "cancelled"
 
 
-class OrderBase(BaseModel):
-    """Base model for order information."""
-    customer_name: str = Field(..., description="Name of the customer")
-    customer_phone: str = Field(..., description="Customer's phone number")
-    location: Location = Field(..., description="Delivery location")
-    items_count: int = Field(default=1, description="Number of items in the order")
-    weight: float = Field(default=1.0, description="Weight of the order in kg")
-    delivery_window_start: Optional[datetime] = Field(
-        None, description="Start of delivery time window"
+class Order(Base):
+    __tablename__ = "orders"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    customer_name = Column(String, nullable=False)
+    customer_phone = Column(String, nullable=True)
+    location_id = Column(String, ForeignKey("locations.id"), nullable=False)
+    items_count = Column(Integer, nullable=False, default=1)
+    weight = Column(Float, nullable=False, default=1.0)
+    status = Column(
+        Enum(OrderStatus), 
+        nullable=False, 
+        default=OrderStatus.PENDING
     )
-    delivery_window_end: Optional[datetime] = Field(
-        None, description="End of delivery time window"
+    created_at = Column(DateTime, server_default=func.now())
+    
+    # Внешние ключи
+    courier_id = Column(
+        UUID(as_uuid=True), 
+        ForeignKey("couriers.id"), 
+        nullable=True
+    )
+    depot_id = Column(
+        UUID(as_uuid=True), 
+        ForeignKey("depots.id"), 
+        nullable=True
     )
     
-    
-class OrderCreate(OrderBase):
-    """Model for creating a new order."""
-    pass
-
-
-class Order(OrderBase):
-    """Full order model with ID and status."""
-    id: UUID = Field(default_factory=uuid4, description="Unique order identifier")
-    status: OrderStatus = Field(
-        default=OrderStatus.PENDING, description="Current status of the order"
-    )
-    created_at: datetime = Field(
-        default_factory=datetime.now, description="Order creation timestamp"
-    )
-    courier_id: Optional[UUID] = Field(None, description="ID of assigned courier")
-    depot_id: Optional[UUID] = Field(None, description="ID of assigned depot") 
+    # Relationships
+    location = relationship("Location")
+    courier = relationship("Courier", back_populates="assigned_orders")
+    depot = relationship("Depot", back_populates="orders")
+    route_points = relationship("RoutePoint", back_populates="order") 

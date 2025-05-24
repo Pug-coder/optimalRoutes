@@ -1,34 +1,48 @@
-from datetime import datetime
-from typing import List, Optional
-from pydantic import BaseModel, Field
-from uuid import UUID, uuid4
+from sqlalchemy import Column, String, Integer, Float, ForeignKey, DateTime, func
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
+import uuid
 
-from .order import Order
+from core.database import Base
 
 
-class RoutePoint(BaseModel):
-    """A point in a delivery route."""
-    order_id: UUID = Field(..., description="ID of the order for this stop")
-    sequence: int = Field(..., description="Position in the delivery sequence")
-    estimated_arrival: Optional[datetime] = Field(
-        None, description="Estimated arrival time"
+class RoutePoint(Base):
+    __tablename__ = "route_points"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    route_id = Column(UUID(as_uuid=True), ForeignKey("routes.id"), nullable=False)
+    order_id = Column(UUID(as_uuid=True), ForeignKey("orders.id"), nullable=False)
+    sequence = Column(Integer, nullable=False)
+    estimated_arrival = Column(DateTime, nullable=True)
+    
+    # Relationships
+    route = relationship("Route", back_populates="points")
+    order = relationship("Order", back_populates="route_points")
+
+
+class Route(Base):
+    __tablename__ = "routes"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    courier_id = Column(
+        UUID(as_uuid=True), 
+        ForeignKey("couriers.id"), 
+        nullable=False
     )
-
-
-class Route(BaseModel):
-    """A complete delivery route for a courier."""
-    id: UUID = Field(default_factory=uuid4, description="Unique route identifier")
-    courier_id: UUID = Field(..., description="ID of the courier")
-    depot_id: UUID = Field(..., description="ID of the depot")
-    created_at: datetime = Field(
-        default_factory=datetime.now, description="Route creation timestamp"
+    depot_id = Column(
+        UUID(as_uuid=True), 
+        ForeignKey("depots.id"), 
+        nullable=False
     )
-    points: List[RoutePoint] = Field(
-        default=[], description="Ordered sequence of delivery points"
-    )
-    total_distance: float = Field(
-        default=0.0, description="Total distance of the route in km"
-    )
-    total_load: int = Field(
-        default=0, description="Total number of items in the route"
+    created_at = Column(DateTime, server_default=func.now())
+    total_distance = Column(Float, default=0.0)
+    total_load = Column(Integer, default=0)
+    
+    # Relationships
+    courier = relationship("Courier", back_populates="routes")
+    depot = relationship("Depot")
+    points = relationship(
+        "RoutePoint", 
+        back_populates="route", 
+        order_by="RoutePoint.sequence"
     ) 
