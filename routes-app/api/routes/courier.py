@@ -1,49 +1,83 @@
-from fastapi import APIRouter, HTTPException
-from typing import List
+"""API-маршруты для работы с курьерами."""
+
+from fastapi import APIRouter, Depends, HTTPException
+from typing import List, Dict
 from uuid import UUID
 
-from ..models import Courier, CourierCreate
-from .depot import depots, route_optimizer
+from ..services import CourierService
+from ..schemas import CourierCreate, CourierResponse
+from core.database import get_db
+from sqlalchemy.ext.asyncio import AsyncSession
 
+# Создаем роутер для курьеров
 router = APIRouter()
 
-# In-memory storage for demo purposes
-couriers = {}
 
-
-@router.post("/", response_model=Courier)
-async def create_courier(courier: CourierCreate):
-    """Create a new courier."""
-    if courier.depot_id not in depots:
+@router.get("/", response_model=List[CourierResponse])
+async def get_all_couriers(db: AsyncSession = Depends(get_db)):
+    """Получить список всех курьеров."""
+    try:
+        couriers = await CourierService.get_all_couriers(db)
+        return couriers
+    except Exception as e:
         raise HTTPException(
-            status_code=404, 
-            detail=f"Depot with id {courier.depot_id} not found"
+            status_code=500,
+            detail=f"Ошибка при получении списка курьеров: {str(e)}"
         )
-    
-    new_courier = Courier(**courier.model_dump())
-    couriers[new_courier.id] = new_courier
-    route_optimizer.add_courier(new_courier)
-    return new_courier
 
 
-@router.get("/", response_model=List[Courier])
-async def list_couriers():
-    """List all couriers."""
-    return list(couriers.values())
+@router.post("/", response_model=CourierResponse)
+async def create_courier(
+    courier_data: CourierCreate,
+    db: AsyncSession = Depends(get_db)
+):
+    """Создать нового курьера."""
+    try:
+        courier = await CourierService.create_courier(db, courier_data)
+        return courier
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Ошибка валидации: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при создании курьера: {str(e)}"
+        )
 
 
-@router.get("/{courier_id}", response_model=Courier)
-async def get_courier(courier_id: UUID):
-    """Get a specific courier by ID."""
-    if courier_id not in couriers:
-        raise HTTPException(status_code=404, detail="Courier not found")
-    return couriers[courier_id]
+@router.get("/{courier_id}", response_model=CourierResponse)
+async def get_courier(
+    courier_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """Получить информацию о курьере по ID."""
+    courier = await CourierService.get_courier(db, courier_id)
+    if not courier:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Курьер с ID {courier_id} не найден"
+        )
+    return courier
 
 
-@router.delete("/{courier_id}")
-async def delete_courier(courier_id: UUID):
-    """Delete a courier."""
-    if courier_id not in couriers:
-        raise HTTPException(status_code=404, detail="Courier not found")
-    del couriers[courier_id]
-    return {"status": "success", "message": "Courier deleted"} 
+@router.delete("/{courier_id}", response_model=Dict[str, bool])
+async def delete_courier(
+    courier_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """Удалить курьера по ID."""
+    try:
+        success = await CourierService.delete_courier(db, courier_id)
+        return {"success": success}
+    except ValueError as e:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Ошибка: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при удалении курьера: {str(e)}"
+        ) 

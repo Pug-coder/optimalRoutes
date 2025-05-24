@@ -1,43 +1,83 @@
-from fastapi import APIRouter, HTTPException
-from typing import List
+"""API-маршруты для работы с депо."""
+
+from fastapi import APIRouter, Depends, HTTPException
+from typing import List, Dict
 from uuid import UUID
 
-from ..models import Depot, DepotCreate
-from ..services import route_optimizer
+from ..services import DepotService, route_optimizer
+from ..schemas import DepotCreate, DepotResponse
+from core.database import get_db
+from sqlalchemy.ext.asyncio import AsyncSession
 
+# Создаем роутер для депо
 router = APIRouter()
 
-# In-memory storage for demo purposes
-depots = {}
+
+@router.get("/", response_model=List[DepotResponse])
+async def get_all_depots(db: AsyncSession = Depends(get_db)):
+    """Получить список всех депо."""
+    try:
+        depots = await DepotService.get_all_depots(db)
+        return depots
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при получении списка депо: {str(e)}"
+        )
 
 
-@router.post("/", response_model=Depot)
-async def create_depot(depot: DepotCreate):
-    """Create a new depot."""
-    new_depot = Depot(**depot.model_dump())
-    depots[new_depot.id] = new_depot
-    route_optimizer.add_depot(new_depot)
-    return new_depot
+@router.post("/", response_model=DepotResponse)
+async def create_depot(
+    depot_data: DepotCreate,
+    db: AsyncSession = Depends(get_db)
+):
+    """Создать новое депо."""
+    try:
+        depot, _ = await DepotService.create_depot(db, depot_data)
+        return depot
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Ошибка валидации: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при создании депо: {str(e)}"
+        )
 
 
-@router.get("/", response_model=List[Depot])
-async def list_depots():
-    """List all depots."""
-    return list(depots.values())
+@router.get("/{depot_id}", response_model=DepotResponse)
+async def get_depot(
+    depot_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """Получить информацию о депо по ID."""
+    depot = await DepotService.get_depot(db, depot_id)
+    if not depot:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Депо с ID {depot_id} не найдено"
+        )
+    return depot
 
 
-@router.get("/{depot_id}", response_model=Depot)
-async def get_depot(depot_id: UUID):
-    """Get a specific depot by ID."""
-    if depot_id not in depots:
-        raise HTTPException(status_code=404, detail="Depot not found")
-    return depots[depot_id]
-
-
-@router.delete("/{depot_id}")
-async def delete_depot(depot_id: UUID):
-    """Delete a depot."""
-    if depot_id not in depots:
-        raise HTTPException(status_code=404, detail="Depot not found")
-    del depots[depot_id]
-    return {"status": "success", "message": "Depot deleted"} 
+@router.delete("/{depot_id}", response_model=Dict[str, bool])
+async def delete_depot(
+    depot_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """Удалить депо по ID."""
+    try:
+        success = await DepotService.delete_depot(db, depot_id)
+        return {"success": success}
+    except ValueError as e:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Ошибка: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при удалении депо: {str(e)}"
+        ) 

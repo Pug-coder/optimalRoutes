@@ -1,104 +1,179 @@
-from fastapi import APIRouter, HTTPException, Query
-from typing import List, Optional
+"""API-маршруты для работы с заказами."""
+
+from fastapi import APIRouter, Depends, HTTPException
+from typing import List, Dict, Optional
 from uuid import UUID
 
-from ..models import Order, OrderCreate, OrderStatus
-from .depot import route_optimizer
+from ..services import OrderService
+from ..schemas import OrderCreate, OrderResponse, OrderStatusUpdate, BulkOrderCreate
+from core.database import get_db
+from sqlalchemy.ext.asyncio import AsyncSession
 
+# Создаем роутер для заказов
 router = APIRouter()
 
-# In-memory storage for demo purposes
-orders = {}
+
+@router.get("/", response_model=List[OrderResponse])
+async def get_all_orders(db: AsyncSession = Depends(get_db)):
+    """Получить список всех заказов."""
+    try:
+        orders = await OrderService.get_all_orders(db)
+        return orders
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при получении списка заказов: {str(e)}"
+        )
 
 
-@router.post("/", response_model=Order)
-async def create_order(order: OrderCreate):
-    """Create a new order."""
-    new_order = Order(**order.model_dump())
-    orders[new_order.id] = new_order
-    route_optimizer.add_order(new_order)
-    return new_order
-
-
-@router.get("/", response_model=List[Order])
-async def list_orders(
-    skip: int = 0, 
-    limit: int = 100, 
-    assigned: Optional[bool] = None
+@router.post("/", response_model=OrderResponse)
+async def create_order(
+    order_data: OrderCreate,
+    db: AsyncSession = Depends(get_db)
 ):
-    """List all orders with optional filtering and pagination."""
-    result = list(orders.values())
-    
-    # Filter by assignment status if requested
-    if assigned is not None:
-        if assigned:
-            result = [order for order in result if order.status == "assigned"]
-        else:
-            result = [order for order in result if order.status != "assigned"]
-    
-    # Apply pagination
-    return result[skip:skip+limit]
+    """Создать новый заказ."""
+    try:
+        order, _ = await OrderService.create_order(db, order_data)
+        return order
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Ошибка валидации: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при создании заказа: {str(e)}"
+        )
 
 
-@router.get("/count")
-async def count_orders(assigned: Optional[bool] = None):
-    """Count orders with optional filtering."""
-    if assigned is None:
-        return {"count": len(orders)}
-    
-    # Count by assignment status
-    if assigned:
-        count = sum(1 for order in orders.values() if order.status == "assigned")
-    else:
-        count = sum(1 for order in orders.values() if order.status != "assigned")
-    
-    return {"count": count}
+@router.post("/bulk", response_model=List[OrderResponse])
+async def create_bulk_orders(
+    bulk_data: BulkOrderCreate,
+    db: AsyncSession = Depends(get_db)
+):
+    """Массово создать заказы."""
+    try:
+        orders = await OrderService.create_bulk_orders(db, bulk_data.orders)
+        return orders
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Ошибка валидации: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при массовом создании заказов: {str(e)}"
+        )
 
 
-@router.post("/bulk", response_model=List[Order])
-async def create_bulk_orders(orders_data: dict):
-    """Create multiple orders at once."""
-    new_orders = []
-    
-    for order_data in orders_data.get("orders", []):
-        new_order = Order(**order_data)
-        orders[new_order.id] = new_order
-        route_optimizer.add_order(new_order)
-        new_orders.append(new_order)
-    
-    return new_orders
+@router.post("/bulk/generate", response_model=List[OrderResponse])
+async def generate_random_orders(
+    count: int = 10,
+    min_lat: float = 55.7,
+    max_lat: float = 55.8,
+    min_lng: float = 37.5,
+    max_lng: float = 37.7,
+    db: AsyncSession = Depends(get_db)
+):
+    """Сгенерировать случайные заказы."""
+    try:
+        if count <= 0 or count > 100:
+            raise ValueError("Количество заказов должно быть от 1 до 100")
+            
+        orders = await OrderService.generate_random_orders(
+            db, count, min_lat, max_lat, min_lng, max_lng
+        )
+        return orders
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Ошибка валидации: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при генерации случайных заказов: {str(e)}"
+        )
 
 
-@router.delete("/")
-async def delete_all_orders():
-    """Delete all orders."""
-    orders.clear()
-    return {"status": "success", "message": "All orders deleted"}
+@router.get("/count", response_model=Dict[str, int])
+async def count_orders(
+    assigned: Optional[bool] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """Получить количество заказов с фильтрацией по статусу назначения."""
+    try:
+        count = await OrderService.count_orders(db, assigned)
+        return {"count": count}
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при подсчете заказов: {str(e)}"
+        )
 
 
-@router.get("/{order_id}", response_model=Order)
-async def get_order(order_id: UUID):
-    """Get a specific order by ID."""
-    if order_id not in orders:
-        raise HTTPException(status_code=404, detail="Order not found")
-    return orders[order_id]
-
-
-@router.put("/{order_id}/status", response_model=Order)
-async def update_order_status(order_id: UUID, status: OrderStatus):
-    """Update the status of an order."""
-    if order_id not in orders:
-        raise HTTPException(status_code=404, detail="Order not found")
-    
-    order = orders[order_id]
-    order.status = status
+@router.get("/{order_id}", response_model=OrderResponse)
+async def get_order(
+    order_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """Получить информацию о заказе по ID."""
+    order = await OrderService.get_order(db, order_id)
+    if not order:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Заказ с ID {order_id} не найден"
+        )
     return order
 
 
-@router.delete("/{order_id}")
-async def delete_order(order_id: UUID):
-    """Delete an order."""
-    if order_id not in orders:
-        raise HTTPException(status_code=404, detail="Order not found")
-    del orders[order_id]
-    return {"status": "success", "message": "Order deleted"} 
+@router.delete("/{order_id}", response_model=Dict[str, bool])
+async def delete_order(
+    order_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """Удалить заказ по ID."""
+    try:
+        success = await OrderService.delete_order(db, order_id)
+        return {"success": success}
+    except ValueError as e:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Ошибка: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при удалении заказа: {str(e)}"
+        )
+
+
+@router.patch("/{order_id}/status", response_model=OrderResponse)
+async def update_order_status(
+    order_id: UUID,
+    status_update: OrderStatusUpdate,
+    db: AsyncSession = Depends(get_db)
+):
+    """Обновить статус заказа."""
+    try:
+        order = await OrderService.update_order_status(
+            db, order_id, status_update
+        )
+        if not order:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Заказ с ID {order_id} не найден"
+            )
+        return order
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Ошибка валидации: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при обновлении статуса заказа: {str(e)}"
+        ) 
