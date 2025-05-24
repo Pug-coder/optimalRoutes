@@ -10,6 +10,7 @@ from ..services import DepotService, CourierService, OrderService
 from ..schemas import RouteCreate, RouteResponse
 from core.database import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
+from ..schemas.route import RouteWithLocationsResponse, LocationResponse, RoutePointWithLocationResponse
 
 # Создаем роутер для маршрутов
 router = APIRouter()
@@ -33,6 +34,78 @@ async def get_all_routes(db: AsyncSession = Depends(get_db)):
         raise HTTPException(
             status_code=500,
             detail=f"Ошибка при получении списка маршрутов: {str(e)}"
+        )
+
+
+@router.get("/with-locations", response_model=List[RouteWithLocationsResponse])
+async def get_routes_with_locations(db: AsyncSession = Depends(get_db)):
+    """Получить все маршруты с полными данными о локациях."""
+    try:
+        # Получаем все маршруты
+        routes = await RouteService.get_all_routes(db)
+        
+        if not routes:
+            return []
+        
+        # Преобразуем каждый маршрут, добавляя координаты
+        routes_with_locations = []
+        
+        for route in routes:
+            # Получаем данные о депо
+            depot = await DepotService.get_depot(db, route.depot_id)
+            if not depot or not depot.location:
+                continue
+                
+            depot_location = LocationResponse(
+                id=depot.location.id,
+                latitude=depot.location.latitude,
+                longitude=depot.location.longitude,
+                address=depot.location.address
+            )
+            
+            # Получаем данные о точках заказов
+            points_with_locations = []
+            for point in route.points:
+                order = await OrderService.get_order(db, point.order_id)
+                if not order or not order.location:
+                    continue
+                    
+                order_location = LocationResponse(
+                    id=order.location.id,
+                    latitude=order.location.latitude,
+                    longitude=order.location.longitude,
+                    address=order.location.address
+                )
+                
+                point_with_location = RoutePointWithLocationResponse(
+                    id=point.id,
+                    order_id=point.order_id,
+                    sequence=point.sequence,
+                    estimated_arrival=point.estimated_arrival,
+                    order_location=order_location,
+                    customer_name=order.customer_name
+                )
+                points_with_locations.append(point_with_location)
+            
+            # Создаем маршрут с координатами
+            route_with_locations = RouteWithLocationsResponse(
+                id=route.id,
+                courier_id=route.courier_id,
+                depot_id=route.depot_id,
+                depot_location=depot_location,
+                total_distance=route.total_distance,
+                total_load=route.total_load,
+                created_at=route.created_at,
+                points=points_with_locations
+            )
+            routes_with_locations.append(route_with_locations)
+        
+        return routes_with_locations
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при получении маршрутов с локациями: {str(e)}"
         )
 
 
@@ -80,29 +153,32 @@ async def optimize_routes(
     """
     Оптимизирует маршруты для доставки заказов.
     Использует алгоритм OR-Tools для оптимизации.
+    Поддерживает Multi-Depot VRP - работает со всеми складами одновременно.
     """
     try:
-        # Если не указан конкретный depot_id, берем первый доступный
-        if not depot_id:
+        # Если указан конкретный depot_id, работаем только с ним
+        if depot_id:
+            depot = await DepotService.get_depot(db, depot_id)
+            if not depot:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Склад с ID {depot_id} не найден"
+                )
+            depots = [depot]
+        else:
+            # Иначе работаем со ВСЕМИ складами (Multi-Depot VRP)
             depots = await DepotService.get_all_depots(db)
             if not depots:
                 raise ValueError("Нет доступных складов для оптимизации")
-            depot_id = depots[0].id
         
-        # Получаем все необходимые данные
-        depot = await DepotService.get_depot(db, depot_id)
-        if not depot:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Склад с ID {depot_id} не найден"
-            )
+        # Получить ВСЕХ курьеров для всех складов
+        all_couriers = []
+        for depot in depots:
+            couriers = await CourierService.get_couriers_by_depot(db, depot.id)
+            all_couriers.extend(couriers)
         
-        # Получить доступных курьеров для этого склада
-        couriers = await CourierService.get_couriers_by_depot(db, depot_id)
-        if not couriers:
-            raise ValueError(
-                f"Нет доступных курьеров для склада {depot.name}"
-            )
+        if not all_couriers:
+            raise ValueError("Нет доступных курьеров для оптимизации")
         
         # Получить нераспределенные заказы
         orders = await OrderService.get_pending_orders(db)
@@ -110,13 +186,14 @@ async def optimize_routes(
             raise ValueError("Нет заказов для оптимизации")
         
         # Преобразуем объекты в словари для оптимизатора
-        depot_data = depot.model_dump()
-        couriers_data = [courier.model_dump() for courier in couriers]
+        # Передаём ВСЕ склады и курьеров
+        depots_data = [depot.model_dump() for depot in depots]
+        couriers_data = [courier.model_dump() for courier in all_couriers]
         orders_data = [order.model_dump() for order in orders]
         
-        # Вызываем оптимизатор
-        optimized_routes = await route_optimizer.optimize_routes(
-            depot_data, orders_data, couriers_data
+        # Вызываем оптимизатор с множественными складами
+        optimized_routes = await route_optimizer.optimize_routes_multi_depot(
+            depots_data, orders_data, couriers_data
         )
         
         # Создаем маршруты в базе данных
@@ -180,29 +257,32 @@ async def optimize_routes_genetic(
     """
     Оптимизирует маршруты для доставки заказов.
     Использует генетический алгоритм для оптимизации.
+    Поддерживает Multi-Depot VRP - работает со всеми складами одновременно.
     """
     try:
-        # Если не указан конкретный depot_id, берем первый доступный
-        if not depot_id:
+        # Если указан конкретный depot_id, работаем только с ним
+        if depot_id:
+            depot = await DepotService.get_depot(db, depot_id)
+            if not depot:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Склад с ID {depot_id} не найден"
+                )
+            depots = [depot]
+        else:
+            # Иначе работаем со ВСЕМИ складами (Multi-Depot VRP)
             depots = await DepotService.get_all_depots(db)
             if not depots:
                 raise ValueError("Нет доступных складов для оптимизации")
-            depot_id = depots[0].id
         
-        # Получаем все необходимые данные
-        depot = await DepotService.get_depot(db, depot_id)
-        if not depot:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Склад с ID {depot_id} не найден"
-            )
+        # Получить ВСЕХ курьеров для всех складов
+        all_couriers = []
+        for depot in depots:
+            couriers = await CourierService.get_couriers_by_depot(db, depot.id)
+            all_couriers.extend(couriers)
         
-        # Получить доступных курьеров для этого склада
-        couriers = await CourierService.get_couriers_by_depot(db, depot_id)
-        if not couriers:
-            raise ValueError(
-                f"Нет доступных курьеров для склада {depot.name}"
-            )
+        if not all_couriers:
+            raise ValueError("Нет доступных курьеров для оптимизации")
         
         # Получить нераспределенные заказы
         orders = await OrderService.get_pending_orders(db)
@@ -210,8 +290,9 @@ async def optimize_routes_genetic(
             raise ValueError("Нет заказов для оптимизации")
         
         # Преобразуем объекты в словари для оптимизатора
-        depot_data = depot.model_dump()
-        couriers_data = [courier.model_dump() for courier in couriers]
+        # Передаём ВСЕ склады и курьеров
+        depots_data = [depot.model_dump() for depot in depots]
+        couriers_data = [courier.model_dump() for courier in all_couriers]
         orders_data = [order.model_dump() for order in orders]
         
         # Подготовка параметров
@@ -222,10 +303,11 @@ async def optimize_routes_genetic(
             "elite_size": params.elite_size
         }
         
-        # Вызываем генетический оптимизатор
-        optimized_routes = await route_optimizer.optimize_routes_genetic(
-            depot_data, orders_data, couriers_data, genetic_params
-        )
+        # Вызываем генетический оптимизатор с множественными складами
+        optimized_routes = await route_optimizer.\
+            optimize_routes_genetic_multi_depot(
+                depots_data, orders_data, couriers_data, genetic_params
+            )
         
         # Создаем маршруты в базе данных
         routes_response = []

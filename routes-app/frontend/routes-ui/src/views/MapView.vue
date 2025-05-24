@@ -183,7 +183,8 @@ export default {
         this.orders = ordersResponse.data
         this.renderOrders()
 
-        const routesResponse = await axios.get(`${API_BASE_URL}/routes`)
+        // Используем новый endpoint с координатами
+        const routesResponse = await axios.get(`${API_BASE_URL}/routes/with-locations`)
         this.routes = routesResponse.data
         this.renderRoutes()
       } catch (error) {
@@ -260,27 +261,33 @@ export default {
       
       if (this.routes && this.routes.length) {
         for (const [index, route] of this.routes.entries()) {
-          if (route.points && route.points.length > 0) {
-            // Собираем точки маршрута, находя координаты заказов и склада
-            const depot = this.depots.find(d => d.id === route.depot_id);
-            if (!depot || !depot.location) continue;
-            
+          if (route.points && route.points.length > 0 && route.depot_location) {
             // Точки маршрута - склад в начале, затем заказы, затем возврат на склад
             const routePoints = [];
             
-            // Добавляем склад в начало маршрута
-            routePoints.push([depot.location.latitude, depot.location.longitude]);
-            
-            // Добавляем заказы
-            for (const point of route.points) {
-              const order = this.orders.find(o => o.id === point.order_id);
-              if (order && order.location) {
-                routePoints.push([order.location.latitude, order.location.longitude]);
+            // Проверяем валидность координат депо
+            if (route.depot_location.latitude != null && 
+                route.depot_location.longitude != null &&
+                !isNaN(route.depot_location.latitude) && 
+                !isNaN(route.depot_location.longitude)) {
+              
+              // Добавляем склад в начало маршрута
+              routePoints.push([route.depot_location.latitude, route.depot_location.longitude]);
+              
+              // Добавляем заказы
+              for (const point of route.points) {
+                if (point.order_location && 
+                    point.order_location.latitude != null && 
+                    point.order_location.longitude != null &&
+                    !isNaN(point.order_location.latitude) && 
+                    !isNaN(point.order_location.longitude)) {
+                  routePoints.push([point.order_location.latitude, point.order_location.longitude]);
+                }
               }
+              
+              // Добавляем склад в конец маршрута
+              routePoints.push([route.depot_location.latitude, route.depot_location.longitude]);
             }
-            
-            // Добавляем склад в конец маршрута
-            routePoints.push([depot.location.latitude, depot.location.longitude]);
             
             if (routePoints.length > 1) {
               // Получаем маршрут по дорогам
@@ -312,8 +319,8 @@ export default {
                   zIndexOffset: 1000
                 });
                 
-                startMarker.bindPopup(`<strong>Начало маршрута</strong><br>Склад: ${depot.name}`);
-                endMarker.bindPopup(`<strong>Конец маршрута</strong><br>Склад: ${depot.name}`);
+                startMarker.bindPopup(`<strong>Начало маршрута</strong><br>Склад: ${route.depot_location.address || 'Без адреса'}`);
+                endMarker.bindPopup(`<strong>Конец маршрута</strong><br>Склад: ${route.depot_location.address || 'Без адреса'}`);
                 
                 this.routeLines.addLayer(startMarker);
                 this.routeLines.addLayer(endMarker);

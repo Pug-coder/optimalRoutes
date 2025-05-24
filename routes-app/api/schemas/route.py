@@ -108,4 +108,45 @@ class RouteResponse(RouteBase):
         description="Ordered sequence of delivery points"
     )
     
+    model_config = {"from_attributes": True}
+
+
+# Добавляем схему для локации
+class LocationResponse(BaseModel):
+    """Schema for location in responses."""
+    id: str = Field(..., description="Location identifier")
+    latitude: float = Field(..., description="Latitude coordinate")
+    longitude: float = Field(..., description="Longitude coordinate")
+    address: Optional[str] = Field(None, description="Address description")
+    
+    model_config = {"from_attributes": True}
+
+
+class RoutePointWithLocationResponse(RoutePointBase):
+    """Schema for route point responses with location data."""
+    id: UUID = Field(..., description="Route point identifier")
+    order_location: LocationResponse = Field(
+        ..., 
+        description="Location data for this order"
+    )
+    customer_name: str = Field(..., description="Customer name")
+    
+    model_config = {"from_attributes": True}
+
+
+class RouteWithLocationsResponse(RouteBase):
+    """Schema for route responses with full location data."""
+    id: UUID = Field(..., description="Route identifier")
+    courier_id: UUID = Field(..., description="ID of the courier")
+    depot_id: UUID = Field(..., description="ID of the depot")
+    depot_location: LocationResponse = Field(
+        ..., 
+        description="Depot location data"
+    )
+    created_at: datetime = Field(..., description="Route creation timestamp")
+    points: List[RoutePointWithLocationResponse] = Field(
+        ..., 
+        description="Ordered sequence of delivery points with locations"
+    )
+    
     model_config = {"from_attributes": True} 

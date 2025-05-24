@@ -389,55 +389,88 @@ class RouteOptimizer:
         """
         size = len(locations)
         
-        # Собираем координаты для запроса
-        coords = []
+        # Проверяем валидность локаций
+        valid_locations = []
         for loc in locations:
+            if (loc and hasattr(loc, 'latitude') and 
+                hasattr(loc, 'longitude') and 
+                loc.latitude is not None and loc.longitude is not None and
+                not (loc.latitude == 0 and loc.longitude == 0)):
+                valid_locations.append(loc)
+        
+        if len(valid_locations) != size:
+            msg = f"Warning: {size - len(valid_locations)} invalid locations"
+            print(msg)
+            if len(valid_locations) < 2:
+                raise Exception("Not enough valid locations for OSRM request")
+        
+        # Собираем координаты для запроса (долгота, широта для OSRM)
+        coords = []
+        for loc in valid_locations:
             coords.append(f"{loc.longitude},{loc.latitude}")
         
         # Соединяем все координаты
         coords_str = ";".join(coords)
         
-        # Формируем URL для запроса
+        # Формируем URL для запроса (для table API)
         url = f"{self.osrm_api_url}{coords_str}"
         
-        # Делаем запрос
-        response = requests.get(url)
+        print(f"OSRM URL: {url}")  # Для отладки
         
-        if response.status_code != 200:
-            raise Exception(
-                f"OSRM API error: {response.status_code}, {response.text}"
-            )
-        
-        # Получаем данные
-        data = response.json()
-        
-        if data.get("code") != "Ok":
-            raise Exception(f"OSRM returned error: {data.get('code')}")
-        
-        # Создаем матрицу расстояний
-        distances = data.get("distances", [])
-        
-        # Проверяем, что получили корректные данные
-        if not distances or len(distances) != size:
-            raise Exception(
-                f"Invalid OSRM response: expected {size}x{size} matrix, "
-                f"got {len(distances)} rows"
-            )
-        
-        # Проверяем размерность каждой строки
-        for i, row in enumerate(distances):
-            if len(row) != size:
+        try:
+            # Делаем запрос с таймаутом
+            response = requests.get(url, timeout=30)
+            
+            if response.status_code != 200:
                 raise Exception(
-                    f"Invalid OSRM response: row {i} has {len(row)} elements, "
-                    f"expected {size}"
+                    f"OSRM API error: {response.status_code}, "
+                    f"{response.text[:200]}"
                 )
-        
-        matrix = np.array(distances, dtype=np.float64)
-        
-        # Преобразуем расстояния из метров в километры
-        matrix = matrix / 1000.0
-        
-        return matrix
+            
+            # Получаем данные
+            data = response.json()
+            
+            if data.get("code") != "Ok":
+                raise Exception(f"OSRM returned error: {data.get('code')}")
+            
+            # Создаем матрицу расстояний
+            distances = data.get("distances", [])
+            
+            # Проверяем, что получили корректные данные
+            if not distances or len(distances) != len(valid_locations):
+                raise Exception(
+                    f"Invalid OSRM response: expected "
+                    f"{len(valid_locations)}x{len(valid_locations)} matrix, "
+                    f"got {len(distances)} rows. Response: {data}"
+                )
+            
+            # Проверяем размерность каждой строки
+            for i, row in enumerate(distances):
+                if len(row) != len(valid_locations):
+                    raise Exception(
+                        f"Invalid OSRM response: row {i} has "
+                        f"{len(row)} elements, expected {len(valid_locations)}"
+                    )
+            
+            matrix = np.array(distances, dtype=np.float64)
+            
+            # Преобразуем расстояния из метров в километры
+            matrix = matrix / 1000.0
+            
+            # Если размер отличается от исходного, дополняем матрицу
+            if len(valid_locations) != size:
+                full_matrix = np.zeros((size, size), dtype=np.float64)
+                for i in range(min(len(valid_locations), size)):
+                    for j in range(min(len(valid_locations), size)):
+                        full_matrix[i, j] = matrix[i, j]
+                return full_matrix
+            
+            return matrix
+            
+        except requests.exceptions.RequestException as e:
+            raise Exception(f"OSRM API request failed: {e}")
+        except Exception as e:
+            raise Exception(f"OSRM processing error: {e}")
     
     def _optimize_route_order(
         self, 
@@ -540,6 +573,167 @@ class RouteOptimizer:
         
         # Используем обычный алгоритм с небольшими модификациями
         return await self.optimize_routes(depot_data, orders, couriers)
+
+    async def optimize_routes_multi_depot(
+        self,
+        depots_data: List[Dict[str, Any]],
+        orders: List[Dict[str, Any]], 
+        couriers: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        Выполняет оптимизацию маршрутов для множественных депо 
+        (Multi-Depot VRP).
+        
+        Args:
+            depots_data: Список данных о депо
+            orders: Список заказов для оптимизации
+            couriers: Список доступных курьеров
+            
+        Returns:
+            Список оптимизированных маршрутов
+        """
+        if not orders or not couriers or not depots_data:
+            return []
+        
+        all_routes = []
+        
+        # Группируем курьеров по депо
+        couriers_by_depot = {}
+        for courier in couriers:
+            depot_id = str(courier.get("depot_id"))
+            if depot_id not in couriers_by_depot:
+                couriers_by_depot[depot_id] = []
+            couriers_by_depot[depot_id].append(courier)
+        
+        # Распределяем заказы между депо на основе расстояния
+        orders_by_depot = self._assign_orders_to_depots(
+            orders, depots_data
+        )
+        
+        # Оптимизируем маршруты для каждого депо
+        for depot_data in depots_data:
+            depot_id = str(depot_data.get("id"))
+            depot_orders = orders_by_depot.get(depot_id, [])
+            depot_couriers = couriers_by_depot.get(depot_id, [])
+            
+            if depot_orders and depot_couriers:
+                # Используем существующий метод для одного депо
+                depot_routes = await self.optimize_routes(
+                    depot_data, depot_orders, depot_couriers
+                )
+                all_routes.extend(depot_routes)
+        
+        return all_routes
+    
+    async def optimize_routes_genetic_multi_depot(
+        self,
+        depots_data: List[Dict[str, Any]],
+        orders: List[Dict[str, Any]], 
+        couriers: List[Dict[str, Any]],
+        params: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Выполняет генетическую оптимизацию маршрутов для множественных депо.
+        
+        Args:
+            depots_data: Список данных о депо
+            orders: Список заказов для оптимизации
+            couriers: Список доступных курьеров
+            params: Параметры генетического алгоритма
+            
+        Returns:
+            Список оптимизированных маршрутов
+        """
+        if not orders or not couriers or not depots_data:
+            return []
+        
+        all_routes = []
+        
+        # Группируем курьеров по депо
+        couriers_by_depot = {}
+        for courier in couriers:
+            depot_id = str(courier.get("depot_id"))
+            if depot_id not in couriers_by_depot:
+                couriers_by_depot[depot_id] = []
+            couriers_by_depot[depot_id].append(courier)
+        
+        # Распределяем заказы между депо на основе расстояния
+        orders_by_depot = self._assign_orders_to_depots(
+            orders, depots_data
+        )
+        
+        # Оптимизируем маршруты для каждого депо 
+        # с помощью генетического алгоритма
+        for depot_data in depots_data:
+            depot_id = str(depot_data.get("id"))
+            depot_orders = orders_by_depot.get(depot_id, [])
+            depot_couriers = couriers_by_depot.get(depot_id, [])
+            
+            if depot_orders and depot_couriers:
+                # Используем генетический алгоритм для этого депо
+                depot_routes = await self.optimize_routes_genetic(
+                    depot_data, depot_orders, depot_couriers, params
+                )
+                all_routes.extend(depot_routes)
+        
+        return all_routes
+    
+    def _assign_orders_to_depots(
+        self, 
+        orders: List[Dict[str, Any]], 
+        depots_data: List[Dict[str, Any]]
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Распределяет заказы между депо на основе минимального расстояния.
+        
+        Args:
+            orders: Список заказов
+            depots_data: Список депо
+            
+        Returns:
+            Словарь depot_id -> список заказов
+        """
+        orders_by_depot = {}
+        
+        # Инициализируем словарь
+        for depot_data in depots_data:
+            depot_id = str(depot_data.get("id"))
+            orders_by_depot[depot_id] = []
+        
+        # Создаем локации депо
+        depot_locations = []
+        for depot_data in depots_data:
+            depot_location = self._create_location_from_dict(
+                depot_data.get("location", {})
+            )
+            depot_locations.append(depot_location)
+        
+        # Для каждого заказа находим ближайшее депо
+        for order in orders:
+            order_location = self._create_location_from_dict(
+                order.get("location", {})
+            )
+            
+            if not order_location:
+                # Если не можем определить локацию, добавляем к первому депо
+                first_depot_id = str(depots_data[0].get("id"))
+                orders_by_depot[first_depot_id].append(order)
+                continue
+            
+            # Находим ближайшее депо
+            min_distance = float('inf')
+            best_depot_id = str(depots_data[0].get("id"))
+            
+            for i, depot_location in enumerate(depot_locations):
+                if depot_location:
+                    distance = order_location.distance_to(depot_location)
+                    if distance < min_distance:
+                        min_distance = distance
+                        best_depot_id = str(depots_data[i].get("id"))
+            
+            orders_by_depot[best_depot_id].append(order)
+        
+        return orders_by_depot
 
 
 # Создаем экземпляр оптимизатора

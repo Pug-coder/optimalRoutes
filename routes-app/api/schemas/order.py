@@ -47,7 +47,9 @@ class OrderBase(BaseModel):
             
             # Проверка телефона
             phone = data.get('customer_phone')
-            if phone is not None and not re.match(r'^\+?[0-9\s\-\(\)]{7,20}$', phone):
+            if phone is not None and not re.match(
+                r'^\+?[0-9\s\-\(\)]{7,20}$', phone
+            ):
                 raise ValueError('phone number format is invalid')
         
         return data
@@ -74,11 +76,20 @@ class OrderCreate(OrderBase):
 class OrderResponse(OrderBase):
     """Schema for order responses."""
     id: UUID = Field(..., description="Order identifier")
+    customer_phone: Optional[str] = Field(
+        None, 
+        description="Customer's phone number",
+        max_length=20
+    )
     location: LocationResponse = Field(..., description="Delivery location")
     status: OrderStatus = Field(..., description="Current status of the order")
     created_at: datetime = Field(..., description="Order creation timestamp")
-    courier_id: Optional[UUID] = Field(None, description="ID of assigned courier")
-    depot_id: Optional[UUID] = Field(None, description="ID of assigned depot")
+    courier_id: Optional[UUID] = Field(
+        None, description="ID of assigned courier"
+    )
+    depot_id: Optional[UUID] = Field(
+        None, description="ID of assigned depot"
+    )
     
     model_config = {"from_attributes": True}
 
@@ -94,8 +105,10 @@ class OrderStatusUpdate(BaseModel):
             status = data.get('status')
             allowed_values = [status.value for status in OrderStatus]
             if status not in allowed_values:
-                raise ValueError(f'status must be one of {", ".join(allowed_values)}')
-        return data 
+                raise ValueError(
+                    f'status must be one of {", ".join(allowed_values)}'
+                )
+        return data
 
 
 class BulkOrderCreate(BaseModel):
