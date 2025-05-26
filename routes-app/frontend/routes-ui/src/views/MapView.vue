@@ -40,7 +40,6 @@
 import L from 'leaflet'
 import axios from 'axios'
 import { API_BASE_URL } from '../config'
-import 'leaflet.polyline.snakeanim/L.Polyline.SnakeAnim.js'
 
 // Добавляем функцию для декодирования полилиний в формате Google (polyline)
 L.Polyline.fromEncoded = function(encoded, options) {
@@ -126,6 +125,88 @@ L.Polyline.prototype.snakeIn = function() {
     this.setStyle({ opacity: 0.8 }); // Просто показываем линию без анимации
     return this;
   }
+};
+
+// Создаем собственную анимацию маршрута без использования SnakeAnim
+L.Polyline.prototype.customRouteAnimation = function(options = {}) {
+  const points = this.getLatLngs();
+  if (!points || points.length < 2) {
+    console.warn('Cannot animate polyline: insufficient points');
+    this.setStyle({ opacity: 0.8 });
+    return this;
+  }
+
+  // Проверяем валидность точек
+  const hasInvalidPoints = points.some(p => 
+    !p || isNaN(p.lat) || isNaN(p.lng) || 
+    !isFinite(p.lat) || !isFinite(p.lng)
+  );
+  
+  if (hasInvalidPoints) {
+    console.warn('Cannot animate polyline: contains invalid points');
+    this.setStyle({ opacity: 0.8 });
+    return this;
+  }
+
+  const duration = options.duration || 2000; // 2 секунды по умолчанию
+  const segments = Math.min(points.length - 1, 50); // Максимум 50 сегментов для производительности
+  const segmentDuration = duration / segments;
+  
+  // Начинаем с невидимой линии
+  this.setStyle({ opacity: 0 });
+  
+  // Создаем временные полилинии для анимации
+  const animatedSegments = [];
+  
+  for (let i = 0; i < segments; i++) {
+    setTimeout(() => {
+      try {
+        const startIndex = Math.floor((i / segments) * (points.length - 1));
+        const endIndex = Math.floor(((i + 1) / segments) * (points.length - 1));
+        
+        if (startIndex < endIndex && endIndex < points.length) {
+          const segmentPoints = points.slice(startIndex, endIndex + 1);
+          
+          // Проверяем валидность сегмента
+          const validSegment = segmentPoints.every(p => 
+            p && !isNaN(p.lat) && !isNaN(p.lng) && 
+            isFinite(p.lat) && isFinite(p.lng)
+          );
+          
+          if (validSegment && segmentPoints.length >= 2) {
+            const segment = L.polyline(segmentPoints, {
+              ...this.options,
+              opacity: 0.8,
+              weight: this.options.weight || 4
+            });
+            
+            if (this._map) {
+              segment.addTo(this._map);
+              animatedSegments.push(segment);
+            }
+          }
+        }
+        
+        // В конце анимации показываем основную линию и убираем временные сегменты
+        if (i === segments - 1) {
+          setTimeout(() => {
+            this.setStyle({ opacity: 0.8 });
+            animatedSegments.forEach(segment => {
+              if (this._map && this._map.hasLayer(segment)) {
+                this._map.removeLayer(segment);
+              }
+            });
+          }, segmentDuration);
+        }
+      } catch (error) {
+        console.error('Error in segment animation:', error);
+        // В случае ошибки просто показываем линию
+        this.setStyle({ opacity: 0.8 });
+      }
+    }, i * segmentDuration);
+  }
+  
+  return this;
 };
 
 export default {
@@ -422,7 +503,7 @@ export default {
                     setTimeout(() => {
                       if (routeLine) {
                         console.log(`Starting animation for route ${index}, segment ${i}`);
-                        routeLine.snakeIn();
+                        routeLine.customRouteAnimation();
                       }
                     }, 100 * index + 50 * i);
                   } catch (error) {
@@ -461,7 +542,7 @@ export default {
                     setTimeout(() => {
                       if (fallbackLine) {
                         console.log(`Starting fallback animation for route ${index}, segment ${i}`);
-                        fallbackLine.snakeIn();
+                        fallbackLine.customRouteAnimation();
                       }
                     }, 100 * index + 50 * i);
                   }
@@ -494,7 +575,7 @@ export default {
                 setTimeout(() => {
                   if (routeLine) {
                     console.log(`Starting direct line animation for route ${index}`);
-                    routeLine.snakeIn();
+                    routeLine.customRouteAnimation();
                   }
                 }, 100 * index);
                 
@@ -524,7 +605,7 @@ export default {
                   setTimeout(() => {
                     if (returnLine) {
                       console.log(`Starting return line animation for route ${index}`);
-                      returnLine.snakeIn();
+                      returnLine.customRouteAnimation();
                     }
                   }, 100 * index + 50);
                 }
