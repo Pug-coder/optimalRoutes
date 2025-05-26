@@ -64,7 +64,7 @@
             <td>{{ courier.name }}</td>
             <td>{{ getDepotName(courier.depot_id) }}</td>
             <td>{{ courier.max_capacity || '-' }}</td>
-            <td>{{ 20 }} кг</td>
+            <td>{{ courier.max_weight || '-' }} кг</td>
             <td>{{ courier.max_distance === 'Infinity' ? 'Без ограничений' : `${courier.max_distance} км` }}</td>
             <td>
               <button @click="editCourier(courier)" class="btn-secondary">Редактировать</button>
@@ -98,11 +98,15 @@
                 <input type="number" id="edit-courier-max-capacity" v-model.number="editingCourier.max_capacity" min="1" step="1">
               </div>
               <div class="form-group">
-                <label for="edit-courier-max-distance">Макс. расстояние (км)</label>
-                <input type="number" id="edit-courier-max-distance" v-model.number="editingCourier.max_distance" min="1" step="1">
+                <label for="edit-courier-max-weight">Макс. вес (кг)</label>
+                <input type="number" id="edit-courier-max-weight" v-model.number="editingCourier.max_weight" min="0.1" step="0.1">
               </div>
             </div>
             <div class="form-row">
+              <div class="form-group">
+                <label for="edit-courier-max-distance">Макс. расстояние (км)</label>
+                <input type="number" id="edit-courier-max-distance" v-model.number="editingCourier.max_distance" min="1" step="1">
+              </div>
               <div class="form-group">
                 <label for="edit-courier-depot-id">Склад</label>
                 <select id="edit-courier-depot-id" v-model="editingCourier.depot_id">
@@ -200,6 +204,7 @@ export default {
           phone: "+7-000-000-0000",
           depot_id: this.newCourier.depot_id,
           max_capacity: parseInt(this.newCourier.max_orders),
+          max_weight: parseFloat(this.newCourier.max_weight),
           max_distance: parseFloat(this.newCourier.max_distance)
         }
 
@@ -233,6 +238,7 @@ export default {
         name: courier.name,
         phone: courier.phone || '',
         max_capacity: courier.max_capacity,
+        max_weight: courier.max_weight || 20,
         max_distance: courier.max_distance,
         depot_id: courier.depot_id
       }
@@ -245,6 +251,7 @@ export default {
         name: '',
         phone: '',
         max_capacity: 5,
+        max_weight: 20,
         max_distance: 50,
         depot_id: ''
       }
@@ -270,6 +277,10 @@ export default {
         
         if (this.editingCourier.max_capacity) {
           updateData.max_capacity = parseInt(this.editingCourier.max_capacity)
+        }
+        
+        if (this.editingCourier.max_weight) {
+          updateData.max_weight = parseFloat(this.editingCourier.max_weight)
         }
         
         if (this.editingCourier.max_distance) {

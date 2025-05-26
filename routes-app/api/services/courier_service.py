@@ -48,6 +48,7 @@ class CourierService:
             name=courier_data.name,
             phone=courier_data.phone,
             max_capacity=courier_data.max_capacity,
+            max_weight=courier_data.max_weight,
             max_distance=courier_data.max_distance,
             depot_id=courier_data.depot_id
         )
@@ -63,6 +64,7 @@ class CourierService:
             name=courier.name,
             phone=courier.phone,
             max_capacity=courier.max_capacity,
+            max_weight=courier.max_weight,
             max_distance=courier.max_distance,
             depot_id=courier.depot_id
         )
@@ -98,6 +100,7 @@ class CourierService:
             name=courier.name,
             phone=courier.phone,
             max_capacity=courier.max_capacity,
+            max_weight=courier.max_weight,
             max_distance=courier.max_distance,
             depot_id=courier.depot_id
         )
@@ -124,6 +127,7 @@ class CourierService:
                 name=courier.name,
                 phone=courier.phone,
                 max_capacity=courier.max_capacity,
+                max_weight=courier.max_weight,
                 max_distance=courier.max_distance,
                 depot_id=courier.depot_id
             )
@@ -157,6 +161,7 @@ class CourierService:
                 name=courier.name,
                 phone=courier.phone,
                 max_capacity=courier.max_capacity,
+                max_weight=courier.max_weight,
                 max_distance=courier.max_distance,
                 depot_id=courier.depot_id
             )
@@ -205,6 +210,7 @@ class CourierService:
                 name=courier.name,
                 phone=courier.phone,
                 max_capacity=courier.max_capacity,
+                max_weight=courier.max_weight,
                 max_distance=courier.max_distance,
                 depot_id=courier.depot_id
             )
@@ -245,6 +251,7 @@ class CourierService:
                 name=courier.name,
                 phone=courier.phone,
                 max_capacity=courier.max_capacity,
+                max_weight=courier.max_weight,
                 max_distance=courier.max_distance,
                 depot_id=courier.depot_id
             )
@@ -305,6 +312,7 @@ class CourierService:
         name: Optional[str] = None,
         phone: Optional[str] = None,
         max_capacity: Optional[int] = None,
+        max_weight: Optional[float] = None,
         max_distance: Optional[float] = None,
         depot_id: Optional[UUID] = None
     ) -> Optional[CourierResponse]:
@@ -317,6 +325,7 @@ class CourierService:
             name: Новое имя курьера
             phone: Новый телефон
             max_capacity: Новая максимальная емкость
+            max_weight: Новый максимальный вес
             max_distance: Новая максимальная дистанция
             depot_id: Новое ID депо
             
@@ -347,6 +356,12 @@ class CourierService:
             if max_capacity <= 0:
                 raise ValueError("Max capacity must be positive")
             courier.max_capacity = max_capacity
+        
+        # Обновляем максимальный вес, если указан
+        if max_weight is not None:
+            if max_weight <= 0:
+                raise ValueError("Max weight must be positive")
+            courier.max_weight = max_weight
         
         # Обновляем максимальную дистанцию, если указана
         if max_distance is not None:
@@ -387,6 +402,7 @@ class CourierService:
             name=courier.name,
             phone=courier.phone,
             max_capacity=courier.max_capacity,
+            max_weight=courier.max_weight,
             max_distance=courier.max_distance,
             depot_id=courier.depot_id
         )

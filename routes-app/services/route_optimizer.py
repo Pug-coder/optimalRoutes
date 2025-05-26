@@ -249,11 +249,14 @@ class RouteOptimizer:
             # Create routing model
             routing = pywrapcp.RoutingModel(manager)
             
-            # Define distance callback
+            # Create distance callback
             def distance_callback(from_index, to_index):
                 from_node = manager.IndexToNode(from_index)
                 to_node = manager.IndexToNode(to_index)
-                return data['distance_matrix'][from_node][to_node]
+                # Convert distance from km to meters and ensure it's an integer
+                distance_km = data['distance_matrix'][from_node][to_node]
+                distance_meters = int(distance_km * 1000)
+                return distance_meters
             
             transit_callback_index = routing.RegisterTransitCallback(distance_callback)
             routing.SetArcCostEvaluatorOfAllVehicles(transit_callback_index)
@@ -274,6 +277,28 @@ class RouteOptimizer:
                     True,  # start cumul to zero
                     f'Capacity_{i}'
                 )
+            
+            # Add distance constraint for each courier
+            distance_callback_index = routing.RegisterTransitCallback(distance_callback)
+            
+            for i, courier_id in enumerate(data['couriers']):
+                courier = self.couriers[courier_id]
+                # Convert max_distance from km to meters (OR-Tools typically uses meters)
+                max_distance_meters = int(courier.max_distance * 1000)
+                
+                routing.AddDimension(
+                    distance_callback_index,
+                    0,  # no slack
+                    max_distance_meters,  # maximum distance for this courier
+                    True,  # start cumul to zero
+                    f'Distance_{i}'
+                )
+                
+                # Get the distance dimension for this courier
+                distance_dimension = routing.GetDimensionOrDie(f'Distance_{i}')
+                
+                # Set the global span cost coefficient to minimize total distance
+                distance_dimension.SetGlobalSpanCostCoefficient(100)
             
             # Setting solution parameters
             search_parameters = pywrapcp.DefaultRoutingSearchParameters()
@@ -444,7 +469,8 @@ class RouteOptimizer:
                         previous_index, index, vehicle_idx)
                 
                 # Update route metrics
-                route.total_distance = route_distance
+                # Convert distance from meters back to kilometers
+                route.total_distance = route_distance / 1000.0
                 route.total_load = route_load
                 
                 # Only add routes that have deliveries

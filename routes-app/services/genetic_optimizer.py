@@ -360,21 +360,39 @@ class GeneticOptimizer:
                 
                 # Check if adding this order exceeds capacity
                 if current_capacity + order.items_count <= courier.max_capacity:
-                    # Add to route
-                    route.points.append(RoutePoint(
-                        order_id=order_id,
-                        sequence=sequence,
-                        estimated_arrival=None
-                    ))
+                    # Create temporary route to check distance constraint
+                    temp_route = Route(
+                        courier_id=courier_id,
+                        depot_id=depot_id,
+                        points=route.points + [RoutePoint(
+                            order_id=order_id,
+                            sequence=sequence,
+                            estimated_arrival=None
+                        )],
+                        total_distance=0.0,
+                        total_load=0
+                    )
                     
-                    # Update capacity and remove from remaining orders
-                    current_capacity += order.items_count
-                    remaining_orders.remove(order_id)
-                    sequence += 1
+                    # Calculate distance for temporary route
+                    self._update_route_metrics(temp_route)
                     
-                    # Stop adding orders if route is full
-                    if current_capacity >= courier.max_capacity:
-                        break
+                    # Check distance constraint
+                    if temp_route.total_distance <= courier.max_distance:
+                        # Add to route
+                        route.points.append(RoutePoint(
+                            order_id=order_id,
+                            sequence=sequence,
+                            estimated_arrival=None
+                        ))
+                        
+                        # Update capacity and remove from remaining orders
+                        current_capacity += order.items_count
+                        remaining_orders.remove(order_id)
+                        sequence += 1
+                        
+                        # Stop adding orders if route is full
+                        if current_capacity >= courier.max_capacity:
+                            break
             
             # Only add routes with orders
             if route.points:
@@ -411,20 +429,38 @@ class GeneticOptimizer:
                 
                 # Check if adding this order exceeds capacity
                 if current_load + order.items_count <= courier.max_capacity:
-                    # Add to route
-                    route.points.append(RoutePoint(
-                        order_id=order_id,
-                        sequence=len(route.points),
-                        estimated_arrival=None
-                    ))
+                    # Create temporary route to check distance constraint
+                    temp_route = Route(
+                        courier_id=route.courier_id,
+                        depot_id=route.depot_id,
+                        points=route.points + [RoutePoint(
+                            order_id=order_id,
+                            sequence=len(route.points),
+                            estimated_arrival=None
+                        )],
+                        total_distance=0.0,
+                        total_load=0
+                    )
                     
-                    # Update capacity
-                    current_load += order.items_count
-                    orders_to_remove.add(order_id)
+                    # Calculate distance for temporary route
+                    self._update_route_metrics(temp_route)
                     
-                    # Stop adding orders if route is full
-                    if current_load >= courier.max_capacity:
-                        break
+                    # Check distance constraint
+                    if temp_route.total_distance <= courier.max_distance:
+                        # Add to route
+                        route.points.append(RoutePoint(
+                            order_id=order_id,
+                            sequence=len(route.points),
+                            estimated_arrival=None
+                        ))
+                        
+                        # Update capacity
+                        current_load += order.items_count
+                        orders_to_remove.add(order_id)
+                        
+                        # Stop adding orders if route is full
+                        if current_load >= courier.max_capacity:
+                            break
             
             # Remove assigned orders
             remaining_orders -= orders_to_remove
@@ -486,20 +522,38 @@ class GeneticOptimizer:
                     
                     # Check if adding this order exceeds capacity
                     if current_load + order.items_count <= courier.max_capacity:
-                        # Add to route
-                        existing_route.points.append(RoutePoint(
-                            order_id=order_id,
-                            sequence=len(existing_route.points),
-                            estimated_arrival=None
-                        ))
+                        # Create temporary route to check distance constraint
+                        temp_route = Route(
+                            courier_id=courier_id,
+                            depot_id=courier.depot_id,
+                            points=existing_route.points + [RoutePoint(
+                                order_id=order_id,
+                                sequence=len(existing_route.points),
+                                estimated_arrival=None
+                            )],
+                            total_distance=0.0,
+                            total_load=0
+                        )
                         
-                        # Update load
-                        current_load += order.items_count
-                        orders_to_remove.add(order_id)
+                        # Calculate distance for temporary route
+                        self._update_route_metrics(temp_route)
                         
-                        # Stop adding orders if route is full
-                        if current_load >= courier.max_capacity:
-                            break
+                        # Check distance constraint
+                        if temp_route.total_distance <= courier.max_distance:
+                            # Add to route
+                            existing_route.points.append(RoutePoint(
+                                order_id=order_id,
+                                sequence=len(existing_route.points),
+                                estimated_arrival=None
+                            ))
+                            
+                            # Update load
+                            current_load += order.items_count
+                            orders_to_remove.add(order_id)
+                            
+                            # Stop adding orders if route is full
+                            if current_load >= courier.max_capacity:
+                                break
                 
                 # Remove assigned orders
                 remaining_orders -= orders_to_remove
@@ -584,12 +638,22 @@ class GeneticOptimizer:
         pending_orders = set(self.order_indices.keys())
         unassigned_orders = pending_orders - assigned_orders
         
-        # The fitness function combines total distance and number of routes
-        # with a heavy penalty for unassigned orders
+        # Heavy penalty for unassigned orders
         unassigned_penalty = len(unassigned_orders) * 1000.0
         
+        # NEW: Heavy penalty for routes exceeding distance constraints
+        distance_violation_penalty = 0.0
+        for route in routes:
+            courier = self.couriers[route.courier_id]
+            max_distance = courier.max_distance
+            
+            if route.total_distance > max_distance:
+                # Penalty proportional to the violation
+                violation = route.total_distance - max_distance
+                distance_violation_penalty += violation * 10000.0  # Much heavier penalty
+        
         # Main fitness components
-        fitness = total_distance + (num_routes * 10.0) + unassigned_penalty
+        fitness = total_distance + (num_routes * 10.0) + unassigned_penalty + distance_violation_penalty
         
         return fitness
         

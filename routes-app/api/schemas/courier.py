@@ -19,9 +19,15 @@ class CourierBase(BaseModel):
     )
     max_capacity: int = Field(
         10, 
-        description="Maximum carrying capacity",
+        description="Maximum carrying capacity (number of items)",
         gt=0,
         le=100
+    )
+    max_weight: float = Field(
+        50.0,
+        description="Maximum weight capacity in kilograms",
+        gt=0,
+        le=1000
     )
     max_distance: float = Field(
         50.0,
@@ -78,9 +84,15 @@ class CourierUpdate(BaseModel):
     )
     max_capacity: Optional[int] = Field(
         None, 
-        description="Maximum carrying capacity",
+        description="Maximum carrying capacity (number of items)",
         gt=0,
         le=100
+    )
+    max_weight: Optional[float] = Field(
+        None,
+        description="Maximum weight capacity in kilograms",
+        gt=0,
+        le=1000
     )
     max_distance: Optional[float] = Field(
         None,
