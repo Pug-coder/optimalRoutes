@@ -27,7 +27,7 @@
           </div>
           <div class="form-group">
             <label for="courier-depot-id">Склад</label>
-            <select id="courier-depot-id" v-model.number="newCourier.depot_id">
+            <select id="courier-depot-id" v-model="newCourier.depot_id">
               <option disabled value="">Выберите склад</option>
               <option v-for="depot in depots" :key="depot.id" :value="depot.id">
                 {{ depot.name }}
@@ -67,11 +67,53 @@
             <td>{{ 20 }} кг</td>
             <td>{{ courier.max_distance === 'Infinity' ? 'Без ограничений' : `${courier.max_distance} км` }}</td>
             <td>
+              <button @click="editCourier(courier)" class="btn-secondary">Редактировать</button>
               <button @click="deleteCourier(courier.id)" class="btn-danger">Удалить</button>
             </td>
           </tr>
         </tbody>
       </table>
+    </div>
+
+    <!-- Edit courier modal -->
+    <div v-if="showEditModal" class="modal-overlay" @click="closeEditModal">
+      <div class="modal" @click.stop>
+        <div class="modal-header">
+          <h3>Редактировать курьера</h3>
+          <button @click="closeEditModal" class="close-btn">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-container">
+            <div class="form-group">
+              <label for="edit-courier-name">Имя</label>
+              <input type="text" id="edit-courier-name" v-model="editingCourier.name" placeholder="Введите имя курьера">
+            </div>
+            <div class="form-group">
+              <label for="edit-courier-phone">Телефон</label>
+              <input type="text" id="edit-courier-phone" v-model="editingCourier.phone" placeholder="Введите телефон">
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="edit-courier-max-capacity">Макс. заказов</label>
+                <input type="number" id="edit-courier-max-capacity" v-model.number="editingCourier.max_capacity" min="1" step="1">
+              </div>
+              <div class="form-group">
+                <label for="edit-courier-depot-id">Склад</label>
+                <select id="edit-courier-depot-id" v-model="editingCourier.depot_id">
+                  <option disabled value="">Выберите склад</option>
+                  <option v-for="depot in depots" :key="depot.id" :value="depot.id">
+                    {{ depot.name }}
+                  </option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button @click="closeEditModal" class="btn-secondary">Отмена</button>
+          <button @click="updateCourier" class="btn-primary">Сохранить</button>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -87,6 +129,14 @@ export default {
       couriers: [],
       depots: [],
       loading: true,
+      showEditModal: false,
+      editingCourier: {
+        id: null,
+        name: '',
+        phone: '',
+        max_capacity: 5,
+        depot_id: ''
+      },
       newCourier: {
         name: '',
         max_orders: 5,
@@ -107,9 +157,13 @@ export default {
         const depotsResponse = await axios.get(`${API_BASE_URL}/depots`)
         this.depots = depotsResponse.data
         
+        console.log('Fetched depots:', this.depots)
+        console.log('First depot id type:', this.depots.length > 0 ? typeof this.depots[0].id : 'no depots')
+        
         // Set default depot if there are any
         if (this.depots.length > 0 && !this.newCourier.depot_id) {
           this.newCourier.depot_id = this.depots[0].id
+          console.log('Set default depot_id:', this.newCourier.depot_id, 'type:', typeof this.newCourier.depot_id)
         }
         
         // Fetch couriers
@@ -142,6 +196,9 @@ export default {
           max_distance: parseFloat(this.newCourier.max_distance)
         }
 
+        console.log('Adding courier with data:', courier)
+        console.log('depot_id type:', typeof courier.depot_id)
+
         const response = await axios.post(`${API_BASE_URL}/couriers`, courier)
         this.couriers.push(response.data)
         
@@ -155,7 +212,82 @@ export default {
         }
       } catch (error) {
         console.error('Error adding courier:', error)
-        alert('Ошибка при добавлении курьера')
+        console.error('Error response:', error.response?.data)
+        if (error.response && error.response.data && error.response.data.detail) {
+          alert(`Ошибка при добавлении курьера: ${error.response.data.detail}`)
+        } else {
+          alert('Ошибка при добавлении курьера')
+        }
+      }
+    },
+    editCourier(courier) {
+      this.editingCourier = {
+        id: courier.id,
+        name: courier.name,
+        phone: courier.phone || '',
+        max_capacity: courier.max_capacity,
+        depot_id: courier.depot_id
+      }
+      this.showEditModal = true
+    },
+    closeEditModal() {
+      this.showEditModal = false
+      this.editingCourier = {
+        id: null,
+        name: '',
+        phone: '',
+        max_capacity: 5,
+        depot_id: ''
+      }
+    },
+    async updateCourier() {
+      try {
+        // Validate inputs
+        if (!this.editingCourier.name || !this.editingCourier.depot_id) {
+          alert('Пожалуйста, заполните все обязательные поля')
+          return
+        }
+
+        // Подготовка данных для PATCH запроса - отправляем только заполненные поля
+        const updateData = {}
+        
+        if (this.editingCourier.name && this.editingCourier.name.trim()) {
+          updateData.name = this.editingCourier.name.trim()
+        }
+        
+        if (this.editingCourier.phone && this.editingCourier.phone.trim()) {
+          updateData.phone = this.editingCourier.phone.trim()
+        }
+        
+        if (this.editingCourier.max_capacity) {
+          updateData.max_capacity = parseInt(this.editingCourier.max_capacity)
+        }
+        
+        if (this.editingCourier.depot_id) {
+          updateData.depot_id = this.editingCourier.depot_id
+        }
+
+        console.log('Sending PATCH request with data:', updateData)
+        console.log('Courier ID:', this.editingCourier.id)
+
+        const response = await axios.patch(`${API_BASE_URL}/couriers/${this.editingCourier.id}`, updateData)
+        
+        // Обновляем курьера в списке
+        const index = this.couriers.findIndex(c => c.id === this.editingCourier.id)
+        if (index !== -1) {
+          this.couriers[index] = response.data
+        }
+        
+        this.closeEditModal()
+        alert('Курьер успешно обновлен')
+      } catch (error) {
+        console.error('Error updating courier:', error)
+        console.error('Error response:', error.response?.data)
+        if (error.response && error.response.data && error.response.data.detail) {
+          alert(`Ошибка при обновлении курьера: ${error.response.data.detail}`)
+        } else {
+          alert('Ошибка при обновлении курьера')
+        }
       }
     },
     async deleteCourier(id) {
@@ -168,7 +300,11 @@ export default {
         this.couriers = this.couriers.filter(courier => courier.id !== id)
       } catch (error) {
         console.error('Error deleting courier:', error)
-        alert('Ошибка при удалении курьера')
+        if (error.response && error.response.data && error.response.data.detail) {
+          alert(`Ошибка при удалении курьера: ${error.response.data.detail}`)
+        } else {
+          alert('Ошибка при удалении курьера')
+        }
       }
     }
   }
@@ -211,6 +347,17 @@ h2 {
   align-self: flex-start;
 }
 
+.btn-secondary {
+  background-color: #6c757d;
+  color: white;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  margin-right: 8px;
+}
+
 .btn-danger {
   background-color: #ff4757;
   color: white;
@@ -219,6 +366,7 @@ h2 {
   border-radius: 4px;
   cursor: pointer;
   font-size: 14px;
+  margin-left: 8px;
 }
 
 .empty-state {
@@ -239,5 +387,70 @@ select {
   border-radius: 4px;
   font-size: 0.9rem;
   width: 100%;
+}
+
+/* Modal styles */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.modal {
+  background: white;
+  border-radius: 8px;
+  width: 90%;
+  max-width: 500px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px;
+  border-bottom: 1px solid #eee;
+}
+
+.modal-header h3 {
+  margin: 0;
+}
+
+.close-btn {
+  background: none;
+  border: none;
+  font-size: 24px;
+  cursor: pointer;
+  color: #999;
+  padding: 0;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.close-btn:hover {
+  color: #333;
+}
+
+.modal-body {
+  padding: 20px;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 20px;
+  border-top: 1px solid #eee;
 }
 </style> 

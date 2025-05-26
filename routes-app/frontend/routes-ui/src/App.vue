@@ -123,36 +123,124 @@ input, select, textarea {
 }
 
 .card {
-  background-color: white;
+  background: white;
   border-radius: 6px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   padding: 20px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
   margin-bottom: 20px;
 }
 
 .form-group {
-  margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 15px;
 }
 
 .form-group label {
-  display: block;
-  margin-bottom: 6px;
+  margin-bottom: 5px;
   font-weight: 500;
+  color: #333;
+}
+
+.form-group input,
+.form-group select,
+.form-group textarea {
+  padding: 8px 12px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 0.9rem;
+}
+
+.form-group input:focus,
+.form-group select:focus,
+.form-group textarea:focus {
+  outline: none;
+  border-color: #42b983;
+  box-shadow: 0 0 0 2px rgba(66, 185, 131, 0.2);
 }
 
 .table {
   width: 100%;
   border-collapse: collapse;
+  margin-top: 10px;
 }
 
-.table th, .table td {
-  padding: 12px 16px;
+.table th,
+.table td {
+  padding: 12px;
   text-align: left;
   border-bottom: 1px solid #eee;
 }
 
 .table th {
-  font-weight: 500;
   background-color: #f9f9f9;
+  font-weight: 500;
+  color: #333;
+}
+
+.table tr:hover {
+  background-color: #f9f9f9;
+}
+
+/* Глобальные стили для круглых попапов Leaflet */
+.leaflet-popup-content-wrapper {
+  border-radius: 20px !important;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2) !important;
+  border: none !important;
+}
+
+.leaflet-popup-tip {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+.leaflet-popup-tip-container {
+  margin-top: -1px !important;
+}
+
+/* Стили для попапов заказов */
+.order-popup .leaflet-popup-content-wrapper {
+  background: linear-gradient(135deg, #f74a4a 0%, #ff6b6b 100%) !important;
+  color: white !important;
+}
+
+/* Стили для попапов складов */
+.depot-popup .leaflet-popup-content-wrapper {
+  background: linear-gradient(135deg, #4a6cf7 0%, #6c7bff 100%) !important;
+  color: white !important;
+}
+
+/* Стили для попапов начала маршрута */
+.route-start-popup .leaflet-popup-content-wrapper {
+  background: linear-gradient(135deg, #4a6cf7 0%, #6c7bff 100%) !important;
+  color: white !important;
+}
+
+/* Стили для попапов конца маршрута */
+.route-end-popup .leaflet-popup-content-wrapper {
+  background: linear-gradient(135deg, #f74a4a 0%, #ff6b6b 100%) !important;
+  color: white !important;
+}
+
+/* Стили для попапов поиска */
+.search-popup .leaflet-popup-content-wrapper {
+  background: linear-gradient(135deg, #ff9800 0%, #ffb74d 100%) !important;
+  color: white !important;
+}
+
+.leaflet-popup-content {
+  margin: 15px 20px !important;
+  font-size: 14px !important;
+  line-height: 1.5 !important;
+  border-radius: 15px !important;
+}
+
+.leaflet-popup-close-button {
+  color: white !important;
+  font-size: 18px !important;
+  font-weight: bold !important;
+  right: 10px !important;
+  top: 8px !important;
 }
 </style>

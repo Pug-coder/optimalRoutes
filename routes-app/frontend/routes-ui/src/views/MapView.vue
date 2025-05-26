@@ -48,6 +48,8 @@ L.Polyline.fromEncoded = function(encoded, options) {
   var index = 0, len = encoded.length;
   var lat = 0, lng = 0;
 
+  console.log('Decoding polyline:', encoded.substring(0, 50) + '...');
+
   try {
     while (index < len) {
       var b, shift = 0, result = 0;
@@ -69,17 +71,28 @@ L.Polyline.fromEncoded = function(encoded, options) {
       var dlng = ((result & 1) ? ~(result >> 1) : (result >> 1));
       lng += dlng;
 
+      const decodedLat = lat * 1e-5;
+      const decodedLng = lng * 1e-5;
+
+      // Детальная проверка координат
+      if (isNaN(decodedLat) || isNaN(decodedLng)) {
+        console.error('NaN coordinates detected in polyline decode:', { lat, lng, decodedLat, decodedLng, index });
+        continue;
+      }
+
       // Проверяем, что координаты валидны
-      if (!isNaN(lat * 1e-5) && !isNaN(lng * 1e-5) &&
-          lat * 1e-5 >= -90 && lat * 1e-5 <= 90 &&
-          lng * 1e-5 >= -180 && lng * 1e-5 <= 180) {
-        points.push(L.latLng([lat * 1e-5, lng * 1e-5]));
+      if (decodedLat >= -90 && decodedLat <= 90 &&
+          decodedLng >= -180 && decodedLng <= 180) {
+        points.push(L.latLng([decodedLat, decodedLng]));
+      } else {
+        console.warn('Invalid coordinate range:', { decodedLat, decodedLng });
       }
     }
   } catch (e) {
     console.error('Error decoding polyline:', e);
   }
 
+  console.log('Decoded points count:', points.length);
   return L.polyline(points, options || {});
 };
 
@@ -204,11 +217,14 @@ export default {
             })
           })
           
-          marker.bindPopup(`
+          const popup = L.popup({
+            className: 'depot-popup'
+          }).setContent(`
             <strong>Склад: ${depot.name}</strong><br>
             Адрес: ${depot.location.address || 'Нет адреса'}
           `)
           
+          marker.bindPopup(popup)
           this.depotMarkers.addLayer(marker)
         }
       })
@@ -224,7 +240,7 @@ export default {
           const marker = L.marker([order.location.latitude, order.location.longitude], {
             icon: L.divIcon({
               className: 'order-marker',
-              html: `<div class="order-icon" style="background-color: ${markerColor};">O</div>`,
+              html: `<div class="order-icon" style="background-color: ${markerColor}; border-radius: 50%;">O</div>`,
               iconSize: [24, 24]
             })
           })
@@ -238,7 +254,9 @@ export default {
               `<br>Курьер: ID ${order.courier_id}`;
           }
           
-          marker.bindPopup(`
+          const popup = L.popup({
+            className: 'order-popup'
+          }).setContent(`
             <strong>Заказ #${order.id}</strong><br>
             Клиент: ${order.customer_name || 'Нет имени'}<br>
             Адрес: ${order.location.address || 'Нет адреса'}<br>
@@ -246,12 +264,15 @@ export default {
             <br>Статус: ${order.status === 'assigned' ? 'Назначен' : 'Ожидает назначения'}
           `)
           
+          marker.bindPopup(popup)
           this.orderMarkers.addLayer(marker)
         }
       })
     },
     async renderRoutes() {
       this.routeLines.clearLayers()
+      
+      console.log('Starting renderRoutes, routes count:', this.routes.length);
       
       // Generate different colors for each route
       const getRouteColor = (index) => {
@@ -261,33 +282,55 @@ export default {
       
       if (this.routes && this.routes.length) {
         for (const [index, route] of this.routes.entries()) {
+          console.log(`Processing route ${index}:`, route);
+          
           if (route.points && route.points.length > 0 && route.depot_location) {
             // Точки маршрута - склад в начале, затем заказы, затем возврат на склад
             const routePoints = [];
+            
+            console.log('Depot location:', route.depot_location);
             
             // Проверяем валидность координат депо
             if (route.depot_location.latitude != null && 
                 route.depot_location.longitude != null &&
                 !isNaN(route.depot_location.latitude) && 
-                !isNaN(route.depot_location.longitude)) {
+                !isNaN(route.depot_location.longitude) &&
+                isFinite(route.depot_location.latitude) &&
+                isFinite(route.depot_location.longitude)) {
               
               // Добавляем склад в начало маршрута
-              routePoints.push([route.depot_location.latitude, route.depot_location.longitude]);
+              const depotCoords = [route.depot_location.latitude, route.depot_location.longitude];
+              console.log('Adding depot coordinates:', depotCoords);
+              routePoints.push(depotCoords);
               
               // Добавляем заказы
-              for (const point of route.points) {
+              for (const [pointIndex, point] of route.points.entries()) {
+                console.log(`Processing point ${pointIndex}:`, point);
+                
                 if (point.order_location && 
                     point.order_location.latitude != null && 
                     point.order_location.longitude != null &&
                     !isNaN(point.order_location.latitude) && 
-                    !isNaN(point.order_location.longitude)) {
-                  routePoints.push([point.order_location.latitude, point.order_location.longitude]);
+                    !isNaN(point.order_location.longitude) &&
+                    isFinite(point.order_location.latitude) &&
+                    isFinite(point.order_location.longitude)) {
+                  
+                  const orderCoords = [point.order_location.latitude, point.order_location.longitude];
+                  console.log(`Adding order coordinates for point ${pointIndex}:`, orderCoords);
+                  routePoints.push(orderCoords);
+                } else {
+                  console.error(`Invalid order location for point ${pointIndex}:`, point.order_location);
                 }
               }
               
               // Добавляем склад в конец маршрута
-              routePoints.push([route.depot_location.latitude, route.depot_location.longitude]);
+              console.log('Adding return depot coordinates:', depotCoords);
+              routePoints.push(depotCoords);
+            } else {
+              console.error('Invalid depot location:', route.depot_location);
             }
+            
+            console.log(`Route ${index} final points:`, routePoints);
             
             if (routePoints.length > 1) {
               // Получаем маршрут по дорогам
@@ -295,11 +338,19 @@ export default {
                 // Разбиваем на сегменты, чтобы избежать ограничений API
                 const segments = [];
                 for (let i = 0; i < routePoints.length - 1; i++) {
-                  segments.push([routePoints[i], routePoints[i + 1]]);
+                  const segment = [routePoints[i], routePoints[i + 1]];
+                  console.log(`Segment ${i}:`, segment);
+                  segments.push(segment);
                 }
                 
                 // Добавляем маркеры начала и конца маршрута
-                const startMarker = L.marker(routePoints[0], {
+                const startCoords = routePoints[0];
+                const endCoords = routePoints[routePoints.length - 1];
+                
+                console.log('Start marker coordinates:', startCoords);
+                console.log('End marker coordinates:', endCoords);
+                
+                const startMarker = L.marker(startCoords, {
                   icon: L.divIcon({
                     className: 'start-marker',
                     html: `<div style="width: 20px; height: 20px; background-color: #4a6cf7; border: 3px solid white; border-radius: 50%;"></div>`,
@@ -309,7 +360,7 @@ export default {
                   zIndexOffset: 1000
                 });
                 
-                const endMarker = L.marker(routePoints[routePoints.length - 1], {
+                const endMarker = L.marker(endCoords, {
                   icon: L.divIcon({
                     className: 'end-marker',
                     html: `<div style="width: 20px; height: 20px; background-color: #f74a4a; border: 3px solid white; border-radius: 50%;"></div>`,
@@ -319,8 +370,13 @@ export default {
                   zIndexOffset: 1000
                 });
                 
-                startMarker.bindPopup(`<strong>Начало маршрута</strong><br>Склад: ${route.depot_location.address || 'Без адреса'}`);
-                endMarker.bindPopup(`<strong>Конец маршрута</strong><br>Склад: ${route.depot_location.address || 'Без адреса'}`);
+                startMarker.bindPopup(L.popup({
+                  className: 'route-start-popup'
+                }).setContent(`<strong>Начало маршрута</strong><br>Склад: ${route.depot_location.address || 'Без адреса'}`));
+                
+                endMarker.bindPopup(L.popup({
+                  className: 'route-end-popup'
+                }).setContent(`<strong>Конец маршрута</strong><br>Склад: ${route.depot_location.address || 'Без адреса'}`));
                 
                 this.routeLines.addLayer(startMarker);
                 this.routeLines.addLayer(endMarker);
@@ -329,6 +385,8 @@ export default {
                 let errorSegments = 0;
                 for (let i = 0; i < segments.length; i++) {
                   const segment = segments[i];
+                  console.log(`Processing segment ${i} for route ${index}:`, segment);
+                  
                   try {
                     // Проверяем валидность сегмента
                     if (!segment || segment.length !== 2 || 
@@ -337,6 +395,7 @@ export default {
                     }
 
                     const roadPoints = await this.getRouteByRoad(segment);
+                    console.log(`Got road points for segment ${i}:`, roadPoints.length, 'points');
                     
                     // Особая обработка для сегмента возврата в депо
                     const isReturnSegment = i === segments.length - 1;
@@ -362,6 +421,7 @@ export default {
                     // Добавляем анимацию
                     setTimeout(() => {
                       if (routeLine) {
+                        console.log(`Starting animation for route ${index}, segment ${i}`);
                         routeLine.snakeIn();
                       }
                     }, 100 * index + 50 * i);
@@ -400,6 +460,7 @@ export default {
                     // Добавляем анимацию для резервной линии
                     setTimeout(() => {
                       if (fallbackLine) {
+                        console.log(`Starting fallback animation for route ${index}, segment ${i}`);
                         fallbackLine.snakeIn();
                       }
                     }, 100 * index + 50 * i);
@@ -432,6 +493,7 @@ export default {
                 // Добавляем анимацию для прямых линий
                 setTimeout(() => {
                   if (routeLine) {
+                    console.log(`Starting direct line animation for route ${index}`);
                     routeLine.snakeIn();
                   }
                 }, 100 * index);
@@ -461,28 +523,54 @@ export default {
                   // Анимируем линию возврата в депо
                   setTimeout(() => {
                     if (returnLine) {
+                      console.log(`Starting return line animation for route ${index}`);
                       returnLine.snakeIn();
                     }
                   }, 100 * index + 50);
                 }
               }
+            } else {
+              console.warn(`Route ${index} has insufficient points:`, routePoints.length);
             }
+          } else {
+            console.warn(`Route ${index} missing points or depot location:`, { 
+              hasPoints: !!route.points, 
+              pointsLength: route.points?.length, 
+              hasDepotLocation: !!route.depot_location 
+            });
           }
         }
       }
+      
+      console.log('Finished renderRoutes');
     },
     // Получение маршрута по реальным дорогам
     async getRouteByRoad(points) {
-      if (!points || points.length < 2) return points;
+      console.log('getRouteByRoad input points:', points);
+      
+      if (!points || points.length < 2) {
+        console.warn('getRouteByRoad: insufficient points');
+        return points;
+      }
       
       // Проверяем валидность входных координат
-      const validPoints = points.filter(point => 
-        Array.isArray(point) && 
-        point.length === 2 && 
-        !isNaN(point[0]) && !isNaN(point[1]) &&
-        point[0] >= -90 && point[0] <= 90 && 
-        point[1] >= -180 && point[1] <= 180
-      );
+      const validPoints = points.filter((point, index) => {
+        const isValid = Array.isArray(point) && 
+          point.length === 2 && 
+          typeof point[0] === 'number' && typeof point[1] === 'number' &&
+          !isNaN(point[0]) && !isNaN(point[1]) &&
+          isFinite(point[0]) && isFinite(point[1]) &&
+          point[0] >= -90 && point[0] <= 90 && 
+          point[1] >= -180 && point[1] <= 180;
+        
+        if (!isValid) {
+          console.error(`Invalid point at index ${index}:`, point);
+        }
+        
+        return isValid;
+      });
+      
+      console.log(`Valid points: ${validPoints.length}/${points.length}`);
       
       if (validPoints.length < 2) {
         console.warn('Not enough valid points for routing');
@@ -492,7 +580,11 @@ export default {
       try {
         // Формируем строку координат для OSRM API
         const coordinates = validPoints.map(point => `${point[1]},${point[0]}`).join(';');
+        console.log('OSRM request coordinates:', coordinates);
+        
         const response = await axios.get(`${OSRM_API_URL}${coordinates}?overview=full&geometries=polyline`);
+        
+        console.log('OSRM response:', response.data);
         
         if (response.data.code !== 'Ok' || !response.data.routes || !response.data.routes.length) {
           console.error('OSRM error:', response.data);
@@ -501,17 +593,31 @@ export default {
         
         // Декодируем полилинию из ответа
         const route = response.data.routes[0];
+        console.log('Route geometry:', route.geometry);
+        
         const polyline = L.Polyline.fromEncoded(route.geometry);
         const latLngs = polyline.getLatLngs();
         
+        console.log('Decoded latLngs count:', latLngs.length);
+        
         // Проверяем полученные координаты на валидность
-        const validLatLngs = latLngs.filter(coord => {
+        const validLatLngs = latLngs.filter((coord, index) => {
           // Проверяем, что координаты не NaN и находятся в допустимых диапазонах
-          return coord && 
+          const isValid = coord && 
+                 typeof coord.lat === 'number' && typeof coord.lng === 'number' &&
                  !isNaN(coord.lat) && !isNaN(coord.lng) &&
+                 isFinite(coord.lat) && isFinite(coord.lng) &&
                  coord.lat >= -90 && coord.lat <= 90 && 
                  coord.lng >= -180 && coord.lng <= 180;
+          
+          if (!isValid) {
+            console.error(`Invalid decoded coordinate at index ${index}:`, coord);
+          }
+          
+          return isValid;
         });
+        
+        console.log(`Valid decoded coordinates: ${validLatLngs.length}/${latLngs.length}`);
         
         // Если после фильтрации осталось слишком мало точек, возвращаем исходные
         if (validLatLngs.length < 2) {
@@ -560,9 +666,11 @@ export default {
           }
           
           // Показываем информацию о найденном месте
-          this.searchMarker.bindPopup(`
+          this.searchMarker.bindPopup(L.popup({
+            className: 'search-popup'
+          }).setContent(`
             <strong>${result.display_name}</strong>
-          `).openPopup();
+          `)).openPopup();
         } else {
           alert('Место не найдено. Попробуйте другой запрос.');
         }
@@ -643,6 +751,7 @@ export default {
 
 .order-icon {
   background-color: #f74a4a;
+  border-radius: 50% !important;
   color: white;
   width: 24px;
   height: 24px;
@@ -682,5 +791,48 @@ export default {
 /* Увеличиваем приоритет отображения маркеров */
 .leaflet-marker-icon {
   z-index: 1000 !important;
+}
+
+/* Стили для круглых попапов */
+:deep(.leaflet-popup-content-wrapper) {
+  border-radius: 15px !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important;
+}
+
+:deep(.leaflet-popup-tip) {
+  border-radius: 50% !important;
+}
+
+/* Специальные стили для попапов заказов */
+:deep(.leaflet-popup-content) {
+  border-radius: 12px;
+  padding: 12px 16px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+/* Стили для попапов маркеров заказов */
+.order-marker + .leaflet-popup :deep(.leaflet-popup-content-wrapper) {
+  background: linear-gradient(135deg, #f74a4a 0%, #ff6b6b 100%) !important;
+  color: white !important;
+  border-radius: 20px !important;
+}
+
+.order-marker + .leaflet-popup :deep(.leaflet-popup-tip) {
+  background: #f74a4a !important;
+  border: none !important;
+  border-radius: 50% !important;
+}
+
+/* Стили для попапов маркеров складов */
+.depot-marker + .leaflet-popup :deep(.leaflet-popup-content-wrapper) {
+  background: linear-gradient(135deg, #4a6cf7 0%, #6c7bff 100%) !important;
+  color: white !important;
+  border-radius: 20px !important;
+}
+
+.depot-marker + .leaflet-popup :deep(.leaflet-popup-tip) {
+  background: #4a6cf7 !important;
+  border: none !important;
 }
 </style> 

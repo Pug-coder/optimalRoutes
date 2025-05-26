@@ -118,25 +118,50 @@
             </div>
           </div>
           
-          <h4>Созданные маршруты</h4>
-          <div class="routes-list">
-            <div v-for="route in lastResult.routes" :key="route.id" class="route-item">
-              <div class="route-header">
-                <div class="route-title">
-                  Маршрут #{{ route.id }} (Курьер: {{ getCourierName(route.courier_id) }})
-                </div>
-                <div class="route-metrics">
-                  <span>{{ route.points.length }} заказов</span>
-                  <span>{{ route.total_distance.toFixed(2) }} км</span>
+          <div class="routes-header">
+            <h4>Созданные маршруты</h4>
+            <div class="routes-controls">
+              <button @click="expandAllRoutes" class="btn-outline small">Развернуть все</button>
+              <button @click="collapseAllRoutes" class="btn-outline small">Свернуть все</button>
+            </div>
+          </div>
+          <div class="routes-accordion">
+            <div v-for="route in lastResult.routes" :key="route.id" class="route-accordion-item">
+              <div class="route-accordion-header" @click="toggleRoute(route.id)">
+                <div class="route-summary">
+                  <div class="route-title">
+                    <i class="chevron-icon" :class="{ 'expanded': expandedRoutes.includes(route.id) }">▼</i>
+                    Маршрут #{{ route.id }} - {{ getCourierName(route.courier_id) }}
+                  </div>
+                  <div class="route-metrics">
+                    <span class="metric-badge orders">{{ route.points.length }} заказов</span>
+                    <span class="metric-badge distance">{{ route.total_distance.toFixed(2) }} км</span>
+                  </div>
                 </div>
               </div>
-              <div class="route-points">
-                <div v-for="(point, index) in route.points" :key="index" class="route-point">
-                  <div class="point-marker">
-                    O
+              <div class="route-accordion-content" :class="{ 'expanded': expandedRoutes.includes(route.id) }">
+                <div class="route-details">
+                  <div class="depot-info">
+                    <div class="depot-marker">D</div>
+                    <span>Склад: {{ getDepotName(route.depot_id) }}</span>
                   </div>
-                  <div class="point-info">
-                    Заказ #{{ point.order_id }}
+                  <div class="route-path">
+                    <div v-for="(point, index) in route.points" :key="index" class="route-step">
+                      <div class="step-number">{{ index + 1 }}</div>
+                      <div class="step-info">
+                        <div class="order-info">
+                          <strong>Заказ #{{ point.order_id }}</strong>
+                        </div>
+                        <div class="order-details" v-if="getOrderDetails(point.order_id)">
+                          <span>{{ getOrderDetails(point.order_id).customer_name || 'Клиент' }}</span>
+                          <span>{{ getOrderDetails(point.order_id).weight || 0 }} кг</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="depot-info return">
+                    <div class="depot-marker">D</div>
+                    <span>Возврат в склад</span>
                   </div>
                 </div>
               </div>
@@ -180,7 +205,9 @@ export default {
         depotCount: 0
       },
       depots: [],
-      couriers: []
+      couriers: [],
+      expandedRoutes: [],
+      orders: []
     }
   },
   mounted() {
@@ -198,6 +225,10 @@ export default {
         const couriersResponse = await axios.get(`${API_BASE_URL}/couriers`)
         this.couriers = couriersResponse.data
         this.stats.courierCount = this.couriers.length
+        
+        // Fetch orders
+        const ordersResponse = await axios.get(`${API_BASE_URL}/orders`)
+        this.orders = ordersResponse.data
         
         // Fetch order counts
         const ordersCountResponse = await axios.get(`${API_BASE_URL}/orders/count`)
@@ -283,6 +314,24 @@ export default {
         console.error('Error resetting routes:', error)
         alert('Ошибка при сбросе маршрутов')
       }
+    },
+    toggleRoute(routeId) {
+      if (this.expandedRoutes.includes(routeId)) {
+        this.expandedRoutes = this.expandedRoutes.filter(id => id !== routeId)
+      } else {
+        this.expandedRoutes.push(routeId)
+      }
+    },
+    getOrderDetails(orderId) {
+      // Ищем заказ по ID в загруженных данных
+      const order = this.orders.find(o => o.id === orderId)
+      return order || null
+    },
+    expandAllRoutes() {
+      this.expandedRoutes = this.lastResult.routes.map(route => route.id)
+    },
+    collapseAllRoutes() {
+      this.expandedRoutes = []
     }
   }
 }
@@ -440,58 +489,130 @@ h4 {
   margin: 20px 0 15px 0;
 }
 
-.routes-list {
+.routes-accordion {
   display: flex;
   flex-direction: column;
-  gap: 15px;
-  max-height: 500px;
-  overflow-y: auto;
+  gap: 10px;
 }
 
-.route-item {
+.route-accordion-item {
   border: 1px solid #eee;
   border-radius: 4px;
   overflow: hidden;
 }
 
-.route-header {
+.route-accordion-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   background-color: #f9f9f9;
   padding: 10px 15px;
-  border-bottom: 1px solid #eee;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.route-accordion-header:hover {
+  background-color: #f0f0f0;
+}
+
+.route-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
 }
 
 .route-title {
   font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chevron-icon {
+  font-size: 12px;
+  transition: transform 0.2s ease;
+  color: #666;
+}
+
+.chevron-icon.expanded {
+  transform: rotate(180deg);
 }
 
 .route-metrics {
   display: flex;
-  gap: 15px;
-  font-size: 0.9rem;
-  color: #666;
+  gap: 10px;
 }
 
-.route-points {
-  padding: 10px 15px;
+.route-accordion-content {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s ease;
+  background-color: #fafafa;
 }
 
-.route-point {
+.route-accordion-content.expanded {
+  max-height: 1000px;
+  padding: 15px;
+}
+
+.route-details {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.depot-info {
   display: flex;
   align-items: center;
-  padding: 8px 0;
-  border-bottom: 1px solid #f5f5f5;
+  gap: 10px;
 }
 
-.route-point:last-child {
-  border-bottom: none;
-}
-
-.point-marker {
+.depot-marker {
   width: 24px;
   height: 24px;
+  border-radius: 50%;
+  background-color: #4a6cf7;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  font-size: 12px;
+}
+
+.route-path {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 0;
+  padding-left: 20px;
+  border-left: 2px solid #e0e0e0;
+}
+
+.route-step {
+  display: flex;
+  align-items: flex-start;
+  padding: 8px 0;
+  position: relative;
+}
+
+.route-step::before {
+  content: '';
+  position: absolute;
+  left: -6px;
+  top: 12px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background-color: #f74a4a;
+  border: 2px solid white;
+  box-shadow: 0 0 0 2px #e0e0e0;
+}
+
+.step-number {
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
   background-color: #f74a4a;
   color: white;
@@ -499,16 +620,59 @@ h4 {
   align-items: center;
   justify-content: center;
   font-weight: bold;
-  margin-right: 10px;
+  font-size: 11px;
+  margin-right: 12px;
+  flex-shrink: 0;
 }
 
-.point-info {
-  font-size: 0.9rem;
+.step-info {
+  flex: 1;
+}
+
+.order-info {
+  font-weight: 500;
+  color: #333;
+  margin-bottom: 4px;
+}
+
+.order-details {
+  font-size: 0.85rem;
   color: #666;
+  display: flex;
+  gap: 15px;
 }
 
-.point-marker.depot {
-  background-color: #4a6cf7;
+.order-details span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.depot-info.return {
+  justify-content: center;
+  margin-top: 10px;
+  padding: 8px;
+  background-color: #f0f0f0;
+  border-radius: 6px;
+}
+
+.metric-badge {
+  background-color: #e3f2fd;
+  color: #1976d2;
+  padding: 4px 8px;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.metric-badge.orders {
+  background-color: #e8f5e8;
+  color: #2e7d32;
+}
+
+.metric-badge.distance {
+  background-color: #fff3e0;
+  color: #f57c00;
 }
 
 .actions {
@@ -561,5 +725,22 @@ select {
   border-radius: 4px;
   font-size: 0.9rem;
   width: 100%;
+}
+
+.routes-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.routes-controls {
+  display: flex;
+  gap: 10px;
+}
+
+.btn-outline.small {
+  padding: 6px 12px;
+  font-size: 0.8rem;
 }
 </style> 
