@@ -315,20 +315,30 @@ class RouteOptimizer:
             'Capacity'
         )
         
-        # Добавляем ограничения по расстоянию
-        max_distance = int(
-            max(
+        # Добавляем индивидуальные ограничения по расстоянию для каждого курьера
+        for vehicle_id, courier in enumerate(couriers):
+            max_distance_meters = int(
                 courier.get("max_distance", 50.0) * 1000
-                for courier in couriers
             )
-        )
-        routing.AddDimension(
-            transit_callback_index,
-            0,  # no slack
-            max_distance,  # maximum distance
-            True,  # start cumul to zero
-            'Distance'
-        )
+            
+            # Создаем уникальное измерение расстояния для каждого курьера
+            dimension_name = f'Distance_{vehicle_id}'
+            routing.AddDimension(
+                transit_callback_index,
+                0,  # no slack
+                max_distance_meters,  # индивидуальное ограничение
+                True,  # start cumul to zero
+                dimension_name
+            )
+            
+            # Получаем измерение и устанавливаем ограничение
+            distance_dimension = routing.GetDimensionOrDie(dimension_name)
+            
+            # Устанавливаем ограничение только для конкретного курьера
+            end_index = routing.End(vehicle_id)
+            distance_dimension.SetCumulVarSoftUpperBound(
+                end_index, max_distance_meters, 100000
+            )
         
         # Настройки поиска
         search_parameters = pywrapcp.DefaultRoutingSearchParameters()
