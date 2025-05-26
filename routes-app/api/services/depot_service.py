@@ -5,7 +5,7 @@ from typing import List, Optional, Tuple
 from uuid import UUID
 import uuid
 
-from ..models import Depot, Location
+from ..models import Depot, Location, Courier, Order
 from ..schemas import DepotCreate, DepotResponse, LocationResponse
 
 
@@ -197,13 +197,37 @@ class DepotService:
         Raises:
             ValueError: Если депо не найдено или нельзя удалить
         """
-        # Получаем депо для получения ID местоположения
-        depot = await DepotService.get_depot(db, depot_id)
+        # Получаем депо напрямую из базы данных
+        result = await db.execute(select(Depot).where(Depot.id == depot_id))
+        depot = result.scalar_one_or_none()
+        
         if not depot:
             raise ValueError(f"Depot with ID {depot_id} not found")
         
-        # Проверяем, что депо можно удалить (нет связанных записей)
-        # Здесь может быть логика проверки связанных заказов и маршрутов
+        # Проверяем, есть ли связанные курьеры
+        couriers_result = await db.execute(
+            select(Courier).where(Courier.depot_id == depot_id)
+        )
+        couriers = couriers_result.scalars().all()
+        
+        if couriers:
+            courier_names = [courier.name for courier in couriers]
+            raise ValueError(
+                f"Невозможно удалить депо. К нему привязано курьеров: {len(couriers)} ({', '.join(courier_names)}). "
+                f"Сначала переназначьте или удалите курьеров."
+            )
+        
+        # Проверяем, есть ли связанные заказы
+        orders_result = await db.execute(
+            select(Order).where(Order.depot_id == depot_id)
+        )
+        orders = orders_result.scalars().all()
+        
+        if orders:
+            raise ValueError(
+                f"Невозможно удалить депо. К нему привязано заказов: {len(orders)}. "
+                f"Сначала переназначьте или удалите заказы."
+            )
         
         location_id = depot.location_id
         

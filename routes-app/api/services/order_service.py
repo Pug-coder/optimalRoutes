@@ -626,18 +626,24 @@ class OrderService:
         Raises:
             ValueError: Если заказ не найден или нельзя удалить
         """
-        # Получаем заказ для получения ID местоположения
-        order = await OrderService.get_order(db, order_id)
+        # Получаем заказ напрямую из базы данных
+        result = await db.execute(select(Order).where(Order.id == order_id))
+        order = result.scalar_one_or_none()
+        
         if not order:
             raise ValueError(f"Order with ID {order_id} not found")
         
-        # Проверяем, что заказ можно удалить (нет связанных записей)
-        # Здесь может быть логика проверки связанных маршрутов
+        # Если заказ назначен курьеру, автоматически отменяем назначение
+        if order.status == OrderStatus.ASSIGNED:
+            order.status = OrderStatus.CANCELLED
+            order.courier_id = None
+            await db.commit()
+            await db.refresh(order)
         
-        # Нельзя удалить заказ в обработке
+        # Проверяем, что заказ можно удалить
         if order.status not in [OrderStatus.PENDING, OrderStatus.CANCELLED]:
             raise ValueError(
-                f"Cannot delete order in status {order.status}"
+                f"Cannot delete order in status {order.status}. Only PENDING and CANCELLED orders can be deleted."
             )
         
         location_id = order.location_id
@@ -724,15 +730,14 @@ class OrderService:
                 OrderStatus.CANCELLED
             ],
             OrderStatus.ASSIGNED: [
-                OrderStatus.IN_PROGRESS, 
+                OrderStatus.IN_TRANSIT, 
                 OrderStatus.CANCELLED
             ],
-            OrderStatus.IN_PROGRESS: [
+            OrderStatus.IN_TRANSIT: [
                 OrderStatus.DELIVERED, 
-                OrderStatus.FAILED
+                OrderStatus.CANCELLED
             ],
             OrderStatus.DELIVERED: [],  # Конечный статус
-            OrderStatus.FAILED: [OrderStatus.PENDING],  # Можно вернуть в ожидание
             OrderStatus.CANCELLED: [OrderStatus.PENDING]  # Можно восстановить
         }
         

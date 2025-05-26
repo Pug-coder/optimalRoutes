@@ -176,13 +176,26 @@ class CourierService:
         Raises:
             ValueError: Если курьер не найден или нельзя удалить
         """
-        # Получаем курьера
-        courier = await CourierService.get_courier(db, courier_id)
+        # Получаем курьера напрямую из базы данных
+        result = await db.execute(select(Courier).where(Courier.id == courier_id))
+        courier = result.scalar_one_or_none()
+        
         if not courier:
             raise ValueError(f"Courier with ID {courier_id} not found")
         
-        # Проверяем, что курьера можно удалить (нет связанных записей)
-        # Здесь может быть логика проверки связанных заказов и маршрутов
+        # Автоматически отменяем все назначенные заказы
+        from ..models import Order
+        from ..models.order import OrderStatus
+        
+        orders_result = await db.execute(
+            select(Order).where(Order.courier_id == courier_id)
+        )
+        assigned_orders = orders_result.scalars().all()
+        
+        # Отменяем назначение заказов
+        for order in assigned_orders:
+            order.status = OrderStatus.PENDING
+            order.courier_id = None
         
         # Удаляем курьера
         await db.execute(delete(Courier).where(Courier.id == courier_id))
@@ -200,7 +213,7 @@ class CourierService:
         phone: Optional[str] = None,
         max_capacity: Optional[int] = None,
         depot_id: Optional[UUID] = None
-    ) -> Optional[Courier]:
+    ) -> Optional[CourierResponse]:
         """
         Обновляет информацию о курьере.
         
@@ -218,8 +231,10 @@ class CourierService:
         Raises:
             ValueError: Если данные неверны
         """
-        # Получаем курьера
-        courier = await CourierService.get_courier(db, courier_id)
+        # Получаем курьера напрямую из базы данных
+        result = await db.execute(select(Courier).where(Courier.id == courier_id))
+        courier = result.scalar_one_or_none()
+        
         if not courier:
             raise ValueError(f"Courier with ID {courier_id} not found")
         
@@ -243,13 +258,36 @@ class CourierService:
             depot = await CourierService._get_depot(db, depot_id)
             if not depot:
                 raise ValueError(f"Depot with ID {depot_id} not found")
+            
+            # Если курьер переназначается в другое депо, отменяем все его заказы
+            if courier.depot_id != depot_id:
+                from ..models import Order
+                from ..models.order import OrderStatus
+                
+                orders_result = await db.execute(
+                    select(Order).where(Order.courier_id == courier_id)
+                )
+                assigned_orders = orders_result.scalars().all()
+                
+                # Отменяем назначение заказов
+                for order in assigned_orders:
+                    order.status = OrderStatus.PENDING
+                    order.courier_id = None
+            
             courier.depot_id = depot_id
         
         # Сохраняем изменения
         await db.commit()
         await db.refresh(courier)
         
-        return courier
+        # Возвращаем CourierResponse
+        return CourierResponse(
+            id=courier.id,
+            name=courier.name,
+            phone=courier.phone,
+            max_capacity=courier.max_capacity,
+            depot_id=courier.depot_id
+        )
     
     @staticmethod
     async def _get_depot(db: AsyncSession, depot_id: UUID) -> Optional[Depot]:
