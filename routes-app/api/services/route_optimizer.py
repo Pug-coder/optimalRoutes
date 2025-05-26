@@ -11,20 +11,29 @@ import time
 
 from ..models import Location
 
+try:
+    from ortools.constraint_solver import routing_enums_pb2
+    from ortools.constraint_solver import pywrapcp
+    OR_TOOLS_AVAILABLE = True
+except ImportError:
+    OR_TOOLS_AVAILABLE = False
+    print("OR-Tools not available. Install with: pip install ortools")
+
 
 class RouteOptimizer:
     """Оптимизатор маршрутов для API."""
     
     def __init__(self):
         """Инициализация оптимизатора маршрутов."""
-        self.use_real_roads = True
+        self.use_real_roads = False  # Отключаем OSRM для стабильной работы
         self.osrm_api_url = "https://router.project-osrm.org/table/v1/driving/"
     
     async def optimize_routes(
         self, 
         depot_data: Dict[str, Any],
         orders: List[Dict[str, Any]], 
-        couriers: List[Dict[str, Any]]
+        couriers: List[Dict[str, Any]],
+        algorithm: str = "nearest_neighbor"
     ) -> List[Dict[str, Any]]:
         """
         Выполняет оптимизацию маршрутов.
@@ -33,6 +42,8 @@ class RouteOptimizer:
             depot_data: Данные о депо
             orders: Список заказов для оптимизации
             couriers: Список доступных курьеров
+            algorithm: Алгоритм оптимизации 
+                ("nearest_neighbor", "or_tools", "genetic")
             
         Returns:
             Список оптимизированных маршрутов
@@ -40,6 +51,31 @@ class RouteOptimizer:
         if not orders or not couriers or not depot_data:
             return []
         
+        # Выбираем алгоритм оптимизации
+        if algorithm == "or_tools" and OR_TOOLS_AVAILABLE:
+            return await self._optimize_with_or_tools(
+                depot_data, orders, couriers
+            )
+        elif algorithm == "genetic":
+            return await self.optimize_routes_genetic(
+                depot_data, orders, couriers
+            )
+        else:
+            # По умолчанию используем алгоритм ближайшего соседа
+            return await self._optimize_with_nearest_neighbor(
+                depot_data, orders, couriers
+            )
+    
+    async def _optimize_with_nearest_neighbor(
+        self, 
+        depot_data: Dict[str, Any],
+        orders: List[Dict[str, Any]], 
+        couriers: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        Оптимизация маршрутов алгоритмом ближайшего соседа.
+        Использует справедливое распределение заказов между курьерами.
+        """
         # Создаем список локаций для расчета матрицы расстояний
         locations = []
         
@@ -73,45 +109,82 @@ class RouteOptimizer:
         # Рассчитываем матрицу расстояний
         distance_matrix = self._compute_distance_matrix(locations)
         
-        # Распределяем заказы между курьерами
+        # НОВЫЙ АЛГОРИТМ: Справедливое распределение заказов
         routes = []
-        orders_copy = orders.copy()  # Работаем с копией
+        orders_copy = orders.copy()
         
-        # Группируем заказы по ближайшему курьеру
+        # Сортируем заказы по расстоянию от депо (ближайшие первыми)
+        sorted_orders = []
+        for order in orders_copy:
+            order_id = str(order["id"])
+            if order_id in order_locations:
+                order_idx = order_locations[order_id]
+                distance = distance_matrix[0][order_idx]
+                sorted_orders.append((order, distance))
+        
+        sorted_orders.sort(key=lambda x: x[1])
+        
+        # Создаем словарь для отслеживания маршрутов курьеров
+        courier_routes = {}
         for courier in couriers:
-            courier_capacity = courier.get("max_capacity", 10)
+            courier_routes[courier["id"]] = {
+                "orders": [],
+                "current_load": 0,
+                "courier": courier
+            }
+        
+        # Распределяем заказы по принципу "round-robin" с проверками
+        courier_index = 0
+        
+        for order, order_distance in sorted_orders:
+            assigned = False
+            attempts = 0
             
-            # Сортируем заказы по расстоянию от депо
-            sorted_orders = []
-            for order in orders_copy:
-                order_id = str(order["id"])
-                if order_id in order_locations:
-                    order_idx = order_locations[order_id]
-                    # Расстояние от депо до заказа
-                    distance = distance_matrix[0][order_idx]
-                    sorted_orders.append((order, distance))
-            
-            # Сортируем заказы по расстоянию
-            sorted_orders.sort(key=lambda x: x[1])
-            
-            # Создаем маршрут для курьера
-            route_orders = []
-            current_load = 0
-            
-            for order, _ in sorted_orders:
+            # Пытаемся назначить заказ, начиная с текущего курьера
+            while not assigned and attempts < len(couriers):
+                courier = couriers[courier_index]
+                courier_id = courier["id"]
+                route_info = courier_routes[courier_id]
+                
                 order_load = order.get("items_count", 1)
-                if current_load + order_load <= courier_capacity:
-                    route_orders.append(order)
-                    current_load += order_load
-                    # Удаляем заказ из списка всех заказов
-                    if order in orders_copy:
-                        orders_copy.remove(order)
+                courier_capacity = courier.get("max_capacity", 10)
+                courier_max_distance = courier.get("max_distance", 50.0)
+                
+                # Проверяем ограничения по грузоподъемности
+                if route_info["current_load"] + order_load <= courier_capacity:
+                    # Временно добавляем заказ для проверки расстояния
+                    temp_orders = route_info["orders"] + [order]
+                    
+                    # Проверяем ограничения по расстоянию
+                    temp_optimized = self._optimize_route_order(
+                        temp_orders, depot_location, distance_matrix, 
+                        order_locations
+                    )
+                    
+                    if temp_optimized["total_distance"] <= courier_max_distance:
+                        # Назначаем заказ этому курьеру
+                        route_info["orders"].append(order)
+                        route_info["current_load"] += order_load
+                        assigned = True
+                        print(f"Заказ {order['id']} назначен курьеру {courier['name']} "
+                              f"(груз: {route_info['current_load']}/{courier_capacity}, "
+                              f"расст: {temp_optimized['total_distance']:.2f}/{courier_max_distance})")
+                
+                # Переходим к следующему курьеру
+                courier_index = (courier_index + 1) % len(couriers)
+                attempts += 1
             
-            # Если есть заказы для этого курьера, создаем маршрут
-            if route_orders:
+            if not assigned:
+                print(f"⚠️ Заказ {order['id']} не удалось назначить ни одному курьеру")
+        
+        # Создаем маршруты для курьеров, у которых есть заказы
+        for courier_id, route_info in courier_routes.items():
+            if route_info["orders"]:
+                courier = route_info["courier"]
+                
                 # Оптимизируем порядок заказов
                 optimized_route = self._optimize_route_order(
-                    route_orders, depot_location, distance_matrix, 
+                    route_info["orders"], depot_location, distance_matrix, 
                     order_locations
                 )
                 
@@ -121,16 +194,13 @@ class RouteOptimizer:
                     "courier_id": str(courier["id"]),
                     "depot_id": str(depot_data.get("id")),
                     "total_distance": optimized_route["total_distance"],
-                    "total_load": sum(
-                        order.get("items_count", 1) for order in route_orders
-                    ),
+                    "total_load": route_info["current_load"],
                     "points": []
                 }
                 
                 # Добавляем точки маршрута
                 for j, order in enumerate(optimized_route["orders"]):
                     order_id = order["id"]
-                    # Убедимся, что order_id строка
                     if not isinstance(order_id, str):
                         order_id = str(order_id)
                     
@@ -140,14 +210,198 @@ class RouteOptimizer:
                     })
                     
                 routes.append(route)
-        
-        # Если остались заказы, распределяем их между курьерами
-        if orders_copy:
-            additional_routes = self._simple_distribution(
-                depot_data.get("id"), orders_copy, couriers
-            )
-            routes.extend(additional_routes)
+                
+                print(f"Маршрут создан для {courier['name']}: "
+                      f"{len(route_info['orders'])} заказов, "
+                      f"{route_info['current_load']} груза, "
+                      f"{optimized_route['total_distance']:.2f} км")
             
+        return routes
+    
+    async def _optimize_with_or_tools(
+        self, 
+        depot_data: Dict[str, Any],
+        orders: List[Dict[str, Any]], 
+        couriers: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        Оптимизация маршрутов с использованием OR-Tools.
+        """
+        if not OR_TOOLS_AVAILABLE:
+            print("OR-Tools not available, falling back to nearest neighbor")
+            return await self._optimize_with_nearest_neighbor(
+                depot_data, orders, couriers
+            )
+        
+        # Создаем список локаций
+        locations = []
+        
+        # Добавляем депо как первую локацию
+        depot_location = self._create_location_from_dict(
+            depot_data.get("location", {})
+        )
+        if not depot_location:
+            return self._simple_distribution(
+                depot_data.get("id"), orders, couriers
+            )
+        
+        locations.append(depot_location)
+        
+        # Добавляем локации заказов
+        order_locations = {}
+        for order in orders:
+            order_location = self._create_location_from_dict(
+                order.get("location", {})
+            )
+            if order_location:
+                locations.append(order_location)
+                order_locations[str(order["id"])] = len(locations) - 1
+        
+        if not order_locations:
+            return self._simple_distribution(
+                depot_data.get("id"), orders, couriers
+            )
+        
+        # Рассчитываем матрицу расстояний
+        distance_matrix = self._compute_distance_matrix(locations)
+        
+        # Преобразуем в целые числа для OR-Tools (умножаем на 1000)
+        distance_matrix_int = (distance_matrix * 1000).astype(int)
+        
+        # Создаем модель OR-Tools
+        manager = pywrapcp.RoutingIndexManager(
+            len(locations), len(couriers), 0
+        )
+        routing = pywrapcp.RoutingModel(manager)
+        
+        # Функция расчета расстояния
+        def distance_callback(from_index, to_index):
+            from_node = manager.IndexToNode(from_index)
+            to_node = manager.IndexToNode(to_index)
+            return distance_matrix_int[from_node][to_node]
+        
+        transit_callback_index = routing.RegisterTransitCallback(
+            distance_callback
+        )
+        routing.SetArcCostEvaluatorOfAllVehicles(transit_callback_index)
+        
+        # Добавляем ограничения по грузоподъемности
+        demands = [0]  # Депо не имеет спроса
+        for order in orders:
+            order_id = str(order["id"])
+            if order_id in order_locations:
+                demands.append(order.get("items_count", 1))
+        
+        def demand_callback(from_index):
+            from_node = manager.IndexToNode(from_index)
+            return demands[from_node]
+        
+        demand_callback_index = routing.RegisterUnaryTransitCallback(
+            demand_callback
+        )
+        
+        # Собираем все грузоподъемности курьеров в один список
+        vehicle_capacities = []
+        for courier in couriers:
+            capacity = courier.get("max_capacity", 10)
+            vehicle_capacities.append(capacity)
+        
+        # Добавляем одно измерение с ограничениями по грузоподъемности для всех курьеров
+        routing.AddDimensionWithVehicleCapacity(
+            demand_callback_index,
+            0,  # null capacity slack
+            vehicle_capacities,  # список грузоподъемностей для всех курьеров
+            True,  # start cumul to zero
+            'Capacity'
+        )
+        
+        # Добавляем ограничения по расстоянию
+        max_distance = int(
+            max(
+                courier.get("max_distance", 50.0) * 1000
+                for courier in couriers
+            )
+        )
+        routing.AddDimension(
+            transit_callback_index,
+            0,  # no slack
+            max_distance,  # maximum distance
+            True,  # start cumul to zero
+            'Distance'
+        )
+        
+        # Настройки поиска
+        search_parameters = pywrapcp.DefaultRoutingSearchParameters()
+        search_parameters.first_solution_strategy = (
+            routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
+        )
+        search_parameters.local_search_metaheuristic = (
+            routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
+        )
+        search_parameters.time_limit.seconds = 30
+        
+        # Решаем задачу
+        solution = routing.SolveWithParameters(search_parameters)
+        
+        if not solution:
+            print("OR-Tools couldn't find solution, using nearest neighbor")
+            return await self._optimize_with_nearest_neighbor(
+                depot_data, orders, couriers
+            )
+        
+        # Извлекаем маршруты из решения
+        routes = []
+        for vehicle_id in range(len(couriers)):
+            route_orders = []
+            index = routing.Start(vehicle_id)
+            route_distance = 0
+            
+            while not routing.IsEnd(index):
+                node_index = manager.IndexToNode(index)
+                if node_index > 0:  # Пропускаем депо
+                    # Находим заказ по индексу локации
+                    for order in orders:
+                        order_id = str(order["id"])
+                        order_in_locations = (
+                            order_id in order_locations and 
+                            order_locations[order_id] == node_index
+                        )
+                        if order_in_locations:
+                            route_orders.append(order)
+                            break
+                
+                previous_index = index
+                index = solution.Value(routing.NextVar(index))
+                route_distance += routing.GetArcCostForVehicle(
+                    previous_index, index, vehicle_id
+                )
+            
+            # Создаем маршрут, если есть заказы
+            if route_orders:
+                route = {
+                    "id": str(uuid.uuid4()),
+                    "courier_id": str(couriers[vehicle_id]["id"]),
+                    "depot_id": str(depot_data.get("id")),
+                    "total_distance": route_distance / 1000.0,  # Обратно в км
+                    "total_load": sum(
+                        order.get("items_count", 1) for order in route_orders
+                    ),
+                    "points": []
+                }
+                
+                # Добавляем точки маршрута
+                for j, order in enumerate(route_orders):
+                    order_id = order["id"]
+                    if not isinstance(order_id, str):
+                        order_id = str(order_id)
+                    
+                    route["points"].append({
+                        "order_id": order_id,
+                        "sequence": j
+                    })
+                
+                routes.append(route)
+        
         return routes
     
     def _simple_distribution(
@@ -557,28 +811,74 @@ class RouteOptimizer:
         Returns:
             Список оптимизированных маршрутов
         """
+        print(f"=== GENETIC OPTIMIZATION CALLED ===")
+        print(f"Depot: {depot_data.get('id') if depot_data else 'None'}")
+        print(f"Orders: {len(orders) if orders else 0}")
+        print(f"Couriers: {len(couriers) if couriers else 0}")
+        
         if not orders or not couriers or not depot_data:
+            print("Missing data, returning empty list")
             return []
+        
+        # Импортируем генетический оптимизатор
+        from .genetic_optimizer import GeneticOptimizer
         
         # Извлекаем параметры генетического алгоритма
         population_size = params.get("population_size", 50) if params else 50
         generations = params.get("generations", 50) if params else 50
         mutation_rate = params.get("mutation_rate", 0.1) if params else 0.1
         elite_size = params.get("elite_size", 10) if params else 10
+        timeout_seconds = params.get("timeout_seconds", 3600) if params else 3600  # Увеличиваем до 1 часа
         
-        # Пока используем обычный алгоритм как заглушку
-        # В реальной реализации здесь была бы полная логика GA
         print(f"Genetic algorithm with params: pop={population_size}, "
               f"gen={generations}, mut={mutation_rate}, elite={elite_size}")
         
-        # Используем обычный алгоритм с небольшими модификациями
-        return await self.optimize_routes(depot_data, orders, couriers)
+        # Создаем экземпляр генетического оптимизатора
+        genetic_optimizer = GeneticOptimizer(
+            population_size=population_size,
+            max_generations=generations,
+            mutation_rate=mutation_rate,
+            elitism_rate=elite_size / population_size,  # Преобразуем в долю
+            timeout_seconds=timeout_seconds
+        )
+        
+        # Добавляем данные в оптимизатор
+        genetic_optimizer.add_depot(depot_data)
+        
+        for courier in couriers:
+            genetic_optimizer.add_courier(courier)
+            
+        for order in orders:
+            genetic_optimizer.add_order(order)
+        
+        # Запускаем оптимизацию
+        try:
+            print(f"Starting genetic optimization with {len(orders)} orders, {len(couriers)} couriers")
+            optimized_routes = genetic_optimizer.optimize_routes()
+            print(f"Genetic optimization completed, got {len(optimized_routes)} routes")
+            
+            # Очищаем оптимизатор
+            genetic_optimizer.reset()
+            
+            return optimized_routes
+            
+        except Exception as e:
+            print(f"Error in genetic optimization: {e}")
+            import traceback
+            traceback.print_exc()
+            # В случае ошибки возвращаемся к алгоритму ближайшего соседа
+            genetic_optimizer.reset()
+            print("Falling back to nearest neighbor algorithm")
+            return await self._optimize_with_nearest_neighbor(
+                depot_data, orders, couriers
+            )
 
     async def optimize_routes_multi_depot(
         self,
         depots_data: List[Dict[str, Any]],
         orders: List[Dict[str, Any]], 
-        couriers: List[Dict[str, Any]]
+        couriers: List[Dict[str, Any]],
+        algorithm: str = "nearest_neighbor"
     ) -> List[Dict[str, Any]]:
         """
         Выполняет оптимизацию маршрутов для множественных депо 
@@ -588,6 +888,7 @@ class RouteOptimizer:
             depots_data: Список данных о депо
             orders: Список заказов для оптимизации
             couriers: Список доступных курьеров
+            algorithm: Алгоритм оптимизации для каждого депо
             
         Returns:
             Список оптимизированных маршрутов
@@ -610,19 +911,33 @@ class RouteOptimizer:
             orders, depots_data
         )
         
+        print(f"Multi-depot optimization with algorithm: {algorithm}")
+        print(f"Depots: {len(depots_data)}, Orders: {len(orders)}, "
+              f"Couriers: {len(couriers)}")
+        
         # Оптимизируем маршруты для каждого депо
         for depot_data in depots_data:
             depot_id = str(depot_data.get("id"))
+            depot_name = depot_data.get("name", f"Depot {depot_id}")
             depot_orders = orders_by_depot.get(depot_id, [])
             depot_couriers = couriers_by_depot.get(depot_id, [])
             
+            print(f"Processing depot {depot_name}: "
+                  f"{len(depot_orders)} orders, {len(depot_couriers)} couriers")
+            
             if depot_orders and depot_couriers:
-                # Используем существующий метод для одного депо
+                # Используем выбранный алгоритм для этого депо
                 depot_routes = await self.optimize_routes(
-                    depot_data, depot_orders, depot_couriers
+                    depot_data, depot_orders, depot_couriers, algorithm
                 )
                 all_routes.extend(depot_routes)
+                print(f"Depot {depot_name} generated {len(depot_routes)} routes")
+            elif depot_orders and not depot_couriers:
+                print(f"Depot {depot_name}: has orders but no couriers")
+            elif not depot_orders and depot_couriers:
+                print(f"Depot {depot_name}: has couriers but no orders")
         
+        print(f"Total routes generated: {len(all_routes)}")
         return all_routes
     
     async def optimize_routes_genetic_multi_depot(

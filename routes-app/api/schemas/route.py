@@ -111,6 +111,30 @@ class RouteResponse(RouteBase):
     model_config = {"from_attributes": True}
 
 
+class OptimizationResponse(BaseModel):
+    """Schema for optimization results."""
+    algorithm: str = Field(
+        ..., description="Algorithm used for optimization"
+    )
+    routes: List[RouteResponse] = Field(
+        ..., description="Optimized routes"
+    )
+    total_distance: float = Field(
+        ..., description="Total distance of all routes"
+    )
+    total_orders: int = Field(
+        ..., description="Total number of orders processed"
+    )
+    assigned_orders: int = Field(
+        ..., description="Number of orders assigned to routes"
+    )
+    execution_time: float = Field(
+        ..., description="Optimization execution time in seconds"
+    )
+    
+    model_config = {"from_attributes": True}
+
+
 # Добавляем схему для локации
 class LocationResponse(BaseModel):
     """Schema for location in responses."""

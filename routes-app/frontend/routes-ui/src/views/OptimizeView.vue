@@ -10,7 +10,8 @@
           <div class="form-group">
             <label for="algorithm">Алгоритм оптимизации</label>
             <select id="algorithm" v-model="settings.algorithm">
-              <option value="ortools">Google OR-Tools (точный)</option>
+              <option value="nearest_neighbor">Ближайший сосед (быстрый)</option>
+              <option value="or_tools">Google OR-Tools (точный)</option>
               <option value="genetic">Генетический алгоритм (эвристический)</option>
             </select>
           </div>
@@ -39,7 +40,11 @@
           </div>
           
           <div class="algorithm-description">
-            <div v-if="settings.algorithm === 'ortools'" class="desc-box">
+            <div v-if="settings.algorithm === 'nearest_neighbor'" class="desc-box">
+              <strong>Ближайший сосед</strong> - быстрый алгоритм, который строит маршрут, всегда выбирая ближайшую непосещенную точку.
+              Подходит для быстрого получения приемлемого результата.
+            </div>
+            <div v-else-if="settings.algorithm === 'or_tools'" class="desc-box">
               <strong>Google OR-Tools</strong> - эффективный алгоритм для точного решения задачи маршрутизации транспорта.
               Хорошо работает с небольшим и средним количеством заказов (до нескольких сотен).
             </div>
@@ -98,7 +103,7 @@
           <div class="result-summary">
             <div class="summary-item">
               <span class="label">Алгоритм:</span>
-              <span class="value">{{ lastResult.algorithm === 'ortools' ? 'Google OR-Tools' : 'Генетический алгоритм' }}</span>
+              <span class="value">{{ getAlgorithmDisplayName(lastResult.algorithm) }}</span>
             </div>
             <div class="summary-item">
               <span class="label">Всего маршрутов:</span>
@@ -187,7 +192,7 @@ export default {
   data() {
     return {
       settings: {
-        algorithm: 'ortools',
+        algorithm: 'nearest_neighbor',
         resetPrevious: true,
         genetic: {
           population_size: 100,
@@ -240,8 +245,27 @@ export default {
         
         // Fetch latest optimization result
         const routesResponse = await axios.get(`${API_BASE_URL}/routes`)
-        if (routesResponse.data && routesResponse.data.length > 0) {
-          // Mock a result object since we don't store the full optimization result
+        if (routesResponse.data && routesResponse.data.length > 0 && !this.lastResult) {
+          // Try to restore from localStorage first
+          const savedResult = localStorage.getItem('lastOptimizationResult')
+          if (savedResult) {
+            try {
+              const parsedResult = JSON.parse(savedResult)
+              // Verify that the saved result matches current routes
+              if (parsedResult.routes && parsedResult.routes.length === routesResponse.data.length) {
+                this.lastResult = {
+                  ...parsedResult,
+                  routes: routesResponse.data // Use fresh route data from API
+                }
+                return
+              }
+            } catch (e) {
+              console.warn('Failed to parse saved optimization result:', e)
+            }
+          }
+          
+          // Fallback: Mock a result object since we don't store the full optimization result
+          // Only set if there's no existing optimization result
           this.lastResult = {
             algorithm: 'unknown',
             routes: routesResponse.data,
@@ -274,29 +298,39 @@ export default {
           await axios.post(`${API_BASE_URL}/routes/reset`)
         }
         
-        // Prepare optimization parameters
-        let optimizeEndpoint = '/routes/optimize';
-        let params = {};
+        // Run optimization
+        let response;
         
         if (this.settings.algorithm === 'genetic') {
-          optimizeEndpoint = '/routes/optimize/genetic';
-          params = {
+          // For genetic algorithm, use separate endpoint with body parameters
+          response = await axios.post(`${API_BASE_URL}/routes/optimize/genetic`, {
             population_size: this.settings.genetic.population_size,
             generations: this.settings.genetic.generations,
             mutation_rate: this.settings.genetic.mutation_rate,
             elite_size: this.settings.genetic.elite_size
-          };
+          });
+        } else {
+          // For other algorithms, use main endpoint with JSON body parameters
+          response = await axios.post(`${API_BASE_URL}/routes/optimize`, {
+            algorithm: this.settings.algorithm
+          });
         }
         
-        // Run optimization
-        const response = await axios.post(`${API_BASE_URL}${optimizeEndpoint}`, params)
-        this.lastResult = response.data
+        // API now returns OptimizationResponse with algorithm info
+        this.lastResult = {
+          algorithm: response.data.algorithm,
+          routes: response.data.routes,
+          assigned_orders: response.data.assigned_orders,
+          total_orders: response.data.total_orders,
+          total_distance: response.data.total_distance,
+          execution_time: response.data.execution_time
+        };
         
-        // Refresh stats
-        await this.fetchStats()
+        // Save optimization result to localStorage
+        localStorage.setItem('lastOptimizationResult', JSON.stringify(this.lastResult));
       } catch (error) {
         console.error('Error during optimization:', error)
-        alert('Ошибка при оптимизации маршрутов')
+        alert('Ошибка при оптимизации маршрутов: ' + (error.response?.data?.detail || error.message))
       } finally {
         this.optimizing = false
       }
@@ -309,6 +343,7 @@ export default {
       try {
         await axios.post(`${API_BASE_URL}/routes/reset`)
         this.lastResult = null
+        localStorage.removeItem('lastOptimizationResult')
         await this.fetchStats()
       } catch (error) {
         console.error('Error resetting routes:', error)
@@ -332,6 +367,18 @@ export default {
     },
     collapseAllRoutes() {
       this.expandedRoutes = []
+    },
+    getAlgorithmDisplayName(algorithm) {
+      switch (algorithm) {
+        case 'nearest_neighbor':
+          return 'Ближайший сосед (быстрый)'
+        case 'or_tools':
+          return 'Google OR-Tools (точный)'
+        case 'genetic':
+          return 'Генетический алгоритм (эвристический)'
+        default:
+          return 'Неизвестный алгоритм'
+      }
     }
   }
 }

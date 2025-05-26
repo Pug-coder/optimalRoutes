@@ -23,6 +23,12 @@ class CourierBase(BaseModel):
         gt=0,
         le=100
     )
+    max_distance: float = Field(
+        50.0,
+        description="Maximum travel distance in kilometers",
+        gt=0,
+        le=1000
+    )
     
     @model_validator(mode='before')
     @classmethod
@@ -75,6 +81,12 @@ class CourierUpdate(BaseModel):
         description="Maximum carrying capacity",
         gt=0,
         le=100
+    )
+    max_distance: Optional[float] = Field(
+        None,
+        description="Maximum travel distance in kilometers",
+        gt=0,
+        le=1000
     )
     depot_id: Optional[UUID] = Field(
         None, 

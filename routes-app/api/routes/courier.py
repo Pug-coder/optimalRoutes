@@ -80,6 +80,7 @@ async def update_courier(
             name=courier_update.name,
             phone=courier_update.phone,
             max_capacity=courier_update.max_capacity,
+            max_distance=courier_update.max_distance,
             depot_id=courier_update.depot_id
         )
         if not updated_courier:

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, ForeignKey, DateTime, func
+from sqlalchemy import Column, String, Integer, Float, ForeignKey, DateTime, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 import uuid
@@ -14,6 +14,7 @@ class Courier(Base):
     phone = Column(String, nullable=True)
     depot_id = Column(UUID(as_uuid=True), ForeignKey("depots.id"), nullable=False)
     max_capacity = Column(Integer, nullable=False, default=10)
+    max_distance = Column(Float, nullable=False, default=50.0)  # Максимальное расстояние в км
     created_at = Column(DateTime, server_default=func.now())
     
     # Relationships

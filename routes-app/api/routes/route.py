@@ -4,16 +4,26 @@ from fastapi import APIRouter, Depends, HTTPException
 from typing import List, Optional
 from uuid import UUID
 from pydantic import BaseModel
+import time
 
 from ..services import RouteService, route_optimizer
 from ..services import DepotService, CourierService, OrderService
-from ..schemas import RouteCreate, RouteResponse
+from ..schemas import (
+    RouteCreate, RouteResponse, RouteWithLocationsResponse, 
+    OptimizationResponse
+)
 from core.database import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
-from ..schemas.route import RouteWithLocationsResponse, LocationResponse, RoutePointWithLocationResponse
+from ..schemas.route import LocationResponse, RoutePointWithLocationResponse
 
 # Создаем роутер для маршрутов
 router = APIRouter()
+
+
+# Модель для параметров оптимизации
+class OptimizationParams(BaseModel):
+    algorithm: Optional[str] = "nearest_neighbor"
+    depot_id: Optional[UUID] = None
 
 
 # Модель для параметров генетического алгоритма
@@ -22,6 +32,7 @@ class GeneticParams(BaseModel):
     generations: Optional[int] = 100
     mutation_rate: Optional[float] = 0.1
     elite_size: Optional[int] = 20
+    depot_id: Optional[UUID] = None
 
 
 @router.get("/", response_model=List[RouteResponse])
@@ -145,24 +156,38 @@ async def get_route(
     return route
 
 
-@router.post("/optimize", response_model=List[RouteResponse])
+@router.post("/optimize", response_model=OptimizationResponse)
 async def optimize_routes(
-    depot_id: Optional[UUID] = None,
+    params: OptimizationParams,
     db: AsyncSession = Depends(get_db)
 ):
     """
     Оптимизирует маршруты для доставки заказов.
-    Использует алгоритм OR-Tools для оптимизации.
+    Поддерживает различные алгоритмы оптимизации:
+    - nearest_neighbor: алгоритм ближайшего соседа (по умолчанию)
+    - or_tools: использует OR-Tools для оптимизации
+    - genetic: генетический алгоритм
     Поддерживает Multi-Depot VRP - работает со всеми складами одновременно.
     """
     try:
+        start_time = time.time()
+        
+        # Проверяем корректность алгоритма
+        valid_algorithms = ["nearest_neighbor", "or_tools", "genetic"]
+        if params.algorithm not in valid_algorithms:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Неподдерживаемый алгоритм: {params.algorithm}. "
+                       f"Доступные: {', '.join(valid_algorithms)}"
+            )
+        
         # Если указан конкретный depot_id, работаем только с ним
-        if depot_id:
-            depot = await DepotService.get_depot(db, depot_id)
+        if params.depot_id:
+            depot = await DepotService.get_depot(db, params.depot_id)
             if not depot:
                 raise HTTPException(
                     status_code=404,
-                    detail=f"Склад с ID {depot_id} не найден"
+                    detail=f"Склад с ID {params.depot_id} не найден"
                 )
             depots = [depot]
         else:
@@ -171,14 +196,17 @@ async def optimize_routes(
             if not depots:
                 raise ValueError("Нет доступных складов для оптимизации")
         
-        # Получить ВСЕХ курьеров для всех складов
+        # Получить ТОЛЬКО СВОБОДНЫХ курьеров для всех складов
         all_couriers = []
         for depot in depots:
-            couriers = await CourierService.get_couriers_by_depot(db, depot.id)
+            # Используем новый метод для получения только свободных курьеров
+            couriers = await CourierService.get_available_couriers_by_depot(
+                db, depot.id
+            )
             all_couriers.extend(couriers)
         
         if not all_couriers:
-            raise ValueError("Нет доступных курьеров для оптимизации")
+            raise ValueError("Нет свободных курьеров для оптимизации")
         
         # Получить нераспределенные заказы
         orders = await OrderService.get_pending_orders(db)
@@ -191,15 +219,42 @@ async def optimize_routes(
         couriers_data = [courier.model_dump() for courier in all_couriers]
         orders_data = [order.model_dump() for order in orders]
         
-        # Вызываем оптимизатор с множественными складами
-        optimized_routes = await route_optimizer.optimize_routes_multi_depot(
-            depots_data, orders_data, couriers_data
-        )
+        # Выбираем метод оптимизации в зависимости от алгоритма
+        if len(depots) > 1:
+            # Для множественных складов
+            if params.algorithm == "genetic":
+                optimized_routes = await (
+                    route_optimizer.optimize_routes_genetic_multi_depot(
+                        depots_data, orders_data, couriers_data
+                    )
+                )
+            else:
+                # OR-Tools и nearest_neighbor для multi-depot
+                optimized_routes = await (
+                    route_optimizer.optimize_routes_multi_depot(
+                        depots_data, orders_data, couriers_data, params.algorithm
+                    )
+                )
+        else:
+            # Для одного склада используем выбранный алгоритм
+            optimized_routes = await route_optimizer.optimize_routes(
+                depots_data[0], orders_data, couriers_data, params.algorithm
+            )
         
         # Создаем маршруты в базе данных
         routes_response = []
+        used_courier_ids = set()  # Отслеживаем уже использованных курьеров
+        
         for route_data in optimized_routes:
             try:
+                courier_id = UUID(route_data["courier_id"])
+                
+                # Проверяем, не использован ли уже этот курьер в текущей сессии
+                if courier_id in used_courier_ids:
+                    print(f"Skipping route for courier {courier_id} - "
+                          f"already used in this session")
+                    continue
+                
                 # Create points list with validated UUIDs
                 points = []
                 for point in route_data["points"]:
@@ -221,7 +276,7 @@ async def optimize_routes(
                     continue
                 
                 route_create = RouteCreate(
-                    courier_id=UUID(route_data["courier_id"]),
+                    courier_id=courier_id,
                     depot_id=UUID(route_data["depot_id"]),
                     total_distance=route_data["total_distance"],
                     total_load=route_data["total_load"],
@@ -230,12 +285,31 @@ async def optimize_routes(
                 
                 route = await RouteService.create_route(db, route_create)
                 routes_response.append(route)
+                
+                # Добавляем курьера в список использованных
+                used_courier_ids.add(courier_id)
+                
             except Exception as e:
                 # Log error but continue with other routes
                 print(f"Error creating route: {e}")
                 continue
         
-        return routes_response
+        end_time = time.time()
+        execution_time = end_time - start_time
+        
+        # Подсчитываем статистику
+        total_distance = sum(route.total_distance for route in routes_response)
+        assigned_orders = sum(len(route.points) for route in routes_response)
+        total_orders = len(orders)
+        
+        return OptimizationResponse(
+            algorithm=params.algorithm,
+            routes=routes_response,
+            total_distance=total_distance,
+            total_orders=total_orders,
+            assigned_orders=assigned_orders,
+            execution_time=execution_time
+        )
     except ValueError as e:
         raise HTTPException(
             status_code=400,
@@ -248,10 +322,9 @@ async def optimize_routes(
         )
 
 
-@router.post("/optimize/genetic", response_model=List[RouteResponse])
+@router.post("/optimize/genetic", response_model=OptimizationResponse)
 async def optimize_routes_genetic(
     params: GeneticParams = GeneticParams(),
-    depot_id: Optional[UUID] = None,
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -260,13 +333,15 @@ async def optimize_routes_genetic(
     Поддерживает Multi-Depot VRP - работает со всеми складами одновременно.
     """
     try:
+        start_time = time.time()
+        
         # Если указан конкретный depot_id, работаем только с ним
-        if depot_id:
-            depot = await DepotService.get_depot(db, depot_id)
+        if params.depot_id:
+            depot = await DepotService.get_depot(db, params.depot_id)
             if not depot:
                 raise HTTPException(
                     status_code=404,
-                    detail=f"Склад с ID {depot_id} не найден"
+                    detail=f"Склад с ID {params.depot_id} не найден"
                 )
             depots = [depot]
         else:
@@ -275,14 +350,17 @@ async def optimize_routes_genetic(
             if not depots:
                 raise ValueError("Нет доступных складов для оптимизации")
         
-        # Получить ВСЕХ курьеров для всех складов
+        # Получить ТОЛЬКО СВОБОДНЫХ курьеров для всех складов
         all_couriers = []
         for depot in depots:
-            couriers = await CourierService.get_couriers_by_depot(db, depot.id)
+            # Используем новый метод для получения только свободных курьеров
+            couriers = await CourierService.get_available_couriers_by_depot(
+                db, depot.id
+            )
             all_couriers.extend(couriers)
         
         if not all_couriers:
-            raise ValueError("Нет доступных курьеров для оптимизации")
+            raise ValueError("Нет свободных курьеров для оптимизации")
         
         # Получить нераспределенные заказы
         orders = await OrderService.get_pending_orders(db)
@@ -304,15 +382,32 @@ async def optimize_routes_genetic(
         }
         
         # Вызываем генетический оптимизатор с множественными складами
-        optimized_routes = await route_optimizer.\
-            optimize_routes_genetic_multi_depot(
-                depots_data, orders_data, couriers_data, genetic_params
+        if len(depots) > 1:
+            optimized_routes = await (
+                route_optimizer.optimize_routes_genetic_multi_depot(
+                    depots_data, orders_data, couriers_data, genetic_params
+                )
+            )
+        else:
+            # Для одного склада
+            optimized_routes = await route_optimizer.optimize_routes_genetic(
+                depots_data[0], orders_data, couriers_data, genetic_params
             )
         
         # Создаем маршруты в базе данных
         routes_response = []
+        used_courier_ids = set()  # Отслеживаем уже использованных курьеров
+        
         for route_data in optimized_routes:
             try:
+                courier_id = UUID(route_data["courier_id"])
+                
+                # Проверяем, не использован ли уже этот курьер в текущей сессии
+                if courier_id in used_courier_ids:
+                    print(f"Skipping route for courier {courier_id} - "
+                          f"already used in this session")
+                    continue
+                
                 # Create points list with validated UUIDs
                 points = []
                 for point in route_data["points"]:
@@ -332,9 +427,9 @@ async def optimize_routes_genetic(
                 # Only proceed if we have valid points
                 if not points:
                     continue
-                    
+                
                 route_create = RouteCreate(
-                    courier_id=UUID(route_data["courier_id"]),
+                    courier_id=courier_id,
                     depot_id=UUID(route_data["depot_id"]),
                     total_distance=route_data["total_distance"],
                     total_load=route_data["total_load"],
@@ -343,12 +438,31 @@ async def optimize_routes_genetic(
                 
                 route = await RouteService.create_route(db, route_create)
                 routes_response.append(route)
+                
+                # Добавляем курьера в список использованных
+                used_courier_ids.add(courier_id)
+                
             except Exception as e:
                 # Log error but continue with other routes
                 print(f"Error creating route: {e}")
                 continue
         
-        return routes_response
+        end_time = time.time()
+        execution_time = end_time - start_time
+        
+        # Подсчитываем статистику
+        total_distance = sum(route.total_distance for route in routes_response)
+        assigned_orders = sum(len(route.points) for route in routes_response)
+        total_orders = len(orders)
+        
+        return OptimizationResponse(
+            algorithm="genetic",
+            routes=routes_response,
+            total_distance=total_distance,
+            total_orders=total_orders,
+            assigned_orders=assigned_orders,
+            execution_time=execution_time
+        )
     except ValueError as e:
         raise HTTPException(
             status_code=400,

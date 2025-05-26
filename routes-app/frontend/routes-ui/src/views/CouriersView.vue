@@ -98,6 +98,12 @@
                 <input type="number" id="edit-courier-max-capacity" v-model.number="editingCourier.max_capacity" min="1" step="1">
               </div>
               <div class="form-group">
+                <label for="edit-courier-max-distance">Макс. расстояние (км)</label>
+                <input type="number" id="edit-courier-max-distance" v-model.number="editingCourier.max_distance" min="1" step="1">
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
                 <label for="edit-courier-depot-id">Склад</label>
                 <select id="edit-courier-depot-id" v-model="editingCourier.depot_id">
                   <option disabled value="">Выберите склад</option>
@@ -135,6 +141,7 @@ export default {
         name: '',
         phone: '',
         max_capacity: 5,
+        max_distance: 50,
         depot_id: ''
       },
       newCourier: {
@@ -226,6 +233,7 @@ export default {
         name: courier.name,
         phone: courier.phone || '',
         max_capacity: courier.max_capacity,
+        max_distance: courier.max_distance,
         depot_id: courier.depot_id
       }
       this.showEditModal = true
@@ -237,6 +245,7 @@ export default {
         name: '',
         phone: '',
         max_capacity: 5,
+        max_distance: 50,
         depot_id: ''
       }
     },
@@ -261,6 +270,10 @@ export default {
         
         if (this.editingCourier.max_capacity) {
           updateData.max_capacity = parseInt(this.editingCourier.max_capacity)
+        }
+        
+        if (this.editingCourier.max_distance) {
+          updateData.max_distance = parseFloat(this.editingCourier.max_distance)
         }
         
         if (this.editingCourier.depot_id) {

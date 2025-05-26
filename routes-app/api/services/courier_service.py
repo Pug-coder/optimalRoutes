@@ -48,6 +48,7 @@ class CourierService:
             name=courier_data.name,
             phone=courier_data.phone,
             max_capacity=courier_data.max_capacity,
+            max_distance=courier_data.max_distance,
             depot_id=courier_data.depot_id
         )
         
@@ -62,6 +63,7 @@ class CourierService:
             name=courier.name,
             phone=courier.phone,
             max_capacity=courier.max_capacity,
+            max_distance=courier.max_distance,
             depot_id=courier.depot_id
         )
     
@@ -96,6 +98,7 @@ class CourierService:
             name=courier.name,
             phone=courier.phone,
             max_capacity=courier.max_capacity,
+            max_distance=courier.max_distance,
             depot_id=courier.depot_id
         )
     
@@ -121,6 +124,7 @@ class CourierService:
                 name=courier.name,
                 phone=courier.phone,
                 max_capacity=courier.max_capacity,
+                max_distance=courier.max_distance,
                 depot_id=courier.depot_id
             )
             for courier in couriers
@@ -153,9 +157,98 @@ class CourierService:
                 name=courier.name,
                 phone=courier.phone,
                 max_capacity=courier.max_capacity,
+                max_distance=courier.max_distance,
                 depot_id=courier.depot_id
             )
             for courier in couriers
+        ]
+    
+    @staticmethod
+    async def get_available_couriers_by_depot(
+        db: AsyncSession, 
+        depot_id: UUID
+    ) -> List[CourierResponse]:
+        """
+        Получает свободных курьеров (не назначенных на активные маршруты) для указанного депо.
+        
+        Args:
+            db: Сессия базы данных
+            depot_id: ID депо
+            
+        Returns:
+            Список свободных курьеров
+        """
+        from ..models import Route
+        
+        # Получаем всех курьеров депо
+        all_couriers_result = await db.execute(
+            select(Courier).where(Courier.depot_id == depot_id)
+        )
+        all_couriers = all_couriers_result.scalars().all()
+        
+        # Получаем ID курьеров, которые уже назначены на маршруты
+        busy_couriers_result = await db.execute(
+            select(Route.courier_id).where(Route.depot_id == depot_id)
+        )
+        busy_courier_ids = {row[0] for row in busy_couriers_result.fetchall()}
+        
+        # Фильтруем свободных курьеров
+        available_couriers = [
+            courier for courier in all_couriers 
+            if courier.id not in busy_courier_ids
+        ]
+        
+        # Преобразуем модели в объекты ответа
+        return [
+            CourierResponse(
+                id=courier.id,
+                name=courier.name,
+                phone=courier.phone,
+                max_capacity=courier.max_capacity,
+                max_distance=courier.max_distance,
+                depot_id=courier.depot_id
+            )
+            for courier in available_couriers
+        ]
+    
+    @staticmethod
+    async def get_all_available_couriers(db: AsyncSession) -> List[CourierResponse]:
+        """
+        Получает всех свободных курьеров (не назначенных на активные маршруты).
+        
+        Args:
+            db: Сессия базы данных
+            
+        Returns:
+            Список свободных курьеров
+        """
+        from ..models import Route
+        
+        # Получаем всех курьеров
+        all_couriers_result = await db.execute(select(Courier))
+        all_couriers = all_couriers_result.scalars().all()
+        
+        # Получаем ID курьеров, которые уже назначены на маршруты
+        busy_couriers_result = await db.execute(select(Route.courier_id))
+        busy_courier_ids = {row[0] for row in busy_couriers_result.fetchall()}
+        
+        # Фильтруем свободных курьеров
+        available_couriers = [
+            courier for courier in all_couriers 
+            if courier.id not in busy_courier_ids
+        ]
+        
+        # Преобразуем модели в объекты ответа
+        return [
+            CourierResponse(
+                id=courier.id,
+                name=courier.name,
+                phone=courier.phone,
+                max_capacity=courier.max_capacity,
+                max_distance=courier.max_distance,
+                depot_id=courier.depot_id
+            )
+            for courier in available_couriers
         ]
     
     @staticmethod
@@ -212,6 +305,7 @@ class CourierService:
         name: Optional[str] = None,
         phone: Optional[str] = None,
         max_capacity: Optional[int] = None,
+        max_distance: Optional[float] = None,
         depot_id: Optional[UUID] = None
     ) -> Optional[CourierResponse]:
         """
@@ -223,6 +317,7 @@ class CourierService:
             name: Новое имя курьера
             phone: Новый телефон
             max_capacity: Новая максимальная емкость
+            max_distance: Новая максимальная дистанция
             depot_id: Новое ID депо
             
         Returns:
@@ -252,6 +347,12 @@ class CourierService:
             if max_capacity <= 0:
                 raise ValueError("Max capacity must be positive")
             courier.max_capacity = max_capacity
+        
+        # Обновляем максимальную дистанцию, если указана
+        if max_distance is not None:
+            if max_distance <= 0:
+                raise ValueError("Max distance must be positive")
+            courier.max_distance = max_distance
         
         # Обновляем депо, если указано
         if depot_id is not None:
@@ -286,6 +387,7 @@ class CourierService:
             name=courier.name,
             phone=courier.phone,
             max_capacity=courier.max_capacity,
+            max_distance=courier.max_distance,
             depot_id=courier.depot_id
         )
     
