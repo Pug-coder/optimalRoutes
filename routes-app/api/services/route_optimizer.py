@@ -25,7 +25,7 @@ class RouteOptimizer:
     
     def __init__(self):
         """Инициализация оптимизатора маршрутов."""
-        self.use_real_roads = False  # Отключаем OSRM для стабильной работы
+        self.use_real_roads = True  # Включаем OSRM для реальных расстояний
         self.osrm_api_url = "https://router.project-osrm.org/table/v1/driving/"
     
     async def optimize_routes(
@@ -716,12 +716,32 @@ class RouteOptimizer:
         if data.get("code") != "Ok":
             raise Exception(f"OSRM returned error: {data.get('code')}")
         
-        # Создаем матрицу расстояний
-        distances = data.get("distances", [])
-        matrix = np.array(distances, dtype=np.float64)
+        # OSRM возвращает durations (время в секундах), а не distances
+        durations = data.get("durations", [])
         
-        # Преобразуем расстояния из метров в километры
-        matrix = matrix / 1000.0
+        # Проверяем, что получили корректные данные
+        if not durations or len(durations) != len(source_locations):
+            print(f"OSRM response data: {data}")
+            raise Exception(
+                f"Invalid OSRM response: expected "
+                f"{len(source_locations)}x{len(source_locations)} matrix, "
+                f"got {len(durations)} rows. Response: {data}"
+            )
+        
+        # Проверяем размерность каждой строки
+        for i, row in enumerate(durations):
+            if len(row) != len(source_locations):
+                raise Exception(
+                    f"Invalid OSRM response: row {i} has "
+                    f"{len(row)} elements, expected {len(source_locations)}"
+                )
+        
+        matrix = np.array(durations, dtype=np.float64)
+        
+        # Преобразуем время (секунды) в приблизительное расстояние (км)
+        # Предполагаем среднюю скорость 50 км/ч в городе
+        average_speed_kmh = 50.0
+        matrix = matrix * (average_speed_kmh / 3600.0)  # секунды -> часы -> км
         
         return matrix
     
@@ -763,13 +783,17 @@ class RouteOptimizer:
         # Формируем URL для запроса (для table API)
         url = f"{self.osrm_api_url}{coords_str}"
         
-        print(f"OSRM URL: {url}")  # Для отладки
+        print(f"OSRM request: {len(valid_locations)} locations")
+        print(f"OSRM URL: {url[:100]}...")  # Показываем первые 100 символов
         
         try:
             # Делаем запрос с таймаутом
             response = requests.get(url, timeout=30)
             
+            print(f"OSRM response status: {response.status_code}")
+            
             if response.status_code != 200:
+                print(f"OSRM error response: {response.text[:500]}")
                 raise Exception(
                     f"OSRM API error: {response.status_code}, "
                     f"{response.text[:200]}"
@@ -781,29 +805,32 @@ class RouteOptimizer:
             if data.get("code") != "Ok":
                 raise Exception(f"OSRM returned error: {data.get('code')}")
             
-            # Создаем матрицу расстояний
-            distances = data.get("distances", [])
+            # OSRM возвращает durations (время в секундах), а не distances
+            durations = data.get("durations", [])
             
             # Проверяем, что получили корректные данные
-            if not distances or len(distances) != len(valid_locations):
+            if not durations or len(durations) != len(valid_locations):
+                print(f"OSRM response data: {data}")
                 raise Exception(
                     f"Invalid OSRM response: expected "
                     f"{len(valid_locations)}x{len(valid_locations)} matrix, "
-                    f"got {len(distances)} rows. Response: {data}"
+                    f"got {len(durations)} rows. Response: {data}"
                 )
             
             # Проверяем размерность каждой строки
-            for i, row in enumerate(distances):
+            for i, row in enumerate(durations):
                 if len(row) != len(valid_locations):
                     raise Exception(
                         f"Invalid OSRM response: row {i} has "
                         f"{len(row)} elements, expected {len(valid_locations)}"
                     )
             
-            matrix = np.array(distances, dtype=np.float64)
+            matrix = np.array(durations, dtype=np.float64)
             
-            # Преобразуем расстояния из метров в километры
-            matrix = matrix / 1000.0
+            # Преобразуем время (секунды) в приблизительное расстояние (км)
+            # Предполагаем среднюю скорость 50 км/ч в городе
+            average_speed_kmh = 50.0
+            matrix = matrix * (average_speed_kmh / 3600.0)  # секунды -> часы -> км
             
             # Если размер отличается от исходного, дополняем матрицу
             if len(valid_locations) != size:

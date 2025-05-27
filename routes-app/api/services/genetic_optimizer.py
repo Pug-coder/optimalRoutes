@@ -70,7 +70,7 @@ class GeneticOptimizer:
         self.order_indices = {}
         
         # OSRM configuration
-        self.use_real_roads: bool = False  # Отключаем OSRM для тестирования
+        self.use_real_roads: bool = True  # Включаем OSRM для реальных расстояний
         self.osrm_api_url: str = (
             "https://router.project-osrm.org/table/v1/driving/"
         )
@@ -243,12 +243,14 @@ class GeneticOptimizer:
         if data.get("code") != "Ok":
             raise Exception(f"OSRM returned error: {data.get('code')}")
         
-        # Создаем матрицу расстояний
-        distances = data.get("distances", [])
-        matrix = np.array(distances, dtype=np.float64)
+        # OSRM возвращает durations (время в секундах), а не distances
+        durations = data.get("durations", [])
+        matrix = np.array(durations, dtype=np.float64)
         
-        # Преобразуем расстояния из метров в километры
-        matrix = matrix / 1000.0
+        # Преобразуем время (секунды) в приблизительное расстояние (км)
+        # Предполагаем среднюю скорость 50 км/ч в городе
+        average_speed_kmh = 50.0
+        matrix = matrix * (average_speed_kmh / 3600.0)  # секунды -> часы -> км
         
         return matrix
 
@@ -288,11 +290,13 @@ class GeneticOptimizer:
             raise Exception(f"OSRM returned error: {data.get('code')}")
         
         # Создаем матрицу расстояний
-        distances = data.get("distances", [])
-        matrix = np.array(distances, dtype=np.float64)
+        durations = data.get("durations", [])
+        matrix = np.array(durations, dtype=np.float64)
         
-        # Преобразуем расстояния из метров в километры
-        matrix = matrix / 1000.0
+        # Преобразуем время (секунды) в приблизительное расстояние (км)
+        # Предполагаем среднюю скорость 50 км/ч в городе
+        average_speed_kmh = 50.0
+        matrix = matrix * (average_speed_kmh / 3600.0)  # секунды -> часы -> км
         
         return matrix
         
