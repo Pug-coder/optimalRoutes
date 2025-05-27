@@ -139,8 +139,9 @@
                     Маршрут #{{ route.id }} - {{ getCourierName(route.courier_id) }}
                   </div>
                   <div class="route-metrics">
-                    <span class="metric-badge orders">{{ route.points.length }} заказов</span>
-                    <span class="metric-badge distance">{{ route.total_distance.toFixed(2) }} км</span>
+                    <span class="metric-badge orders">{{ route.points.length }} из {{ getCourierInfo(route.courier_id).max_capacity }} заказов</span>
+                    <span class="metric-badge distance">{{ route.total_distance.toFixed(2) }} из {{ getCourierInfo(route.courier_id).max_distance }} км</span>
+                    <span class="metric-badge weight">{{ route.total_weight.toFixed(2) }} из {{ getCourierInfo(route.courier_id).max_weight }} кг</span>
                   </div>
                 </div>
               </div>
@@ -286,6 +287,19 @@ export default {
     getCourierName(courierId) {
       const courier = this.couriers.find(c => c.id === courierId)
       return courier ? courier.name : `Курьер #${courierId}`
+    },
+    getCourier(courierId) {
+      const courier = this.couriers.find(c => c.id === courierId)
+      return courier || { name: `Курьер #${courierId}`, max_weight: 0 }
+    },
+    getCourierInfo(courierId) {
+      const courier = this.couriers.find(c => c.id === courierId)
+      return courier || { 
+        name: `Курьер #${courierId}`, 
+        max_capacity: 0, 
+        max_weight: 0, 
+        max_distance: 0 
+      }
     },
     async runOptimization() {
       if (this.optimizing) return
@@ -720,6 +734,11 @@ h4 {
 .metric-badge.distance {
   background-color: #fff3e0;
   color: #f57c00;
+}
+
+.metric-badge.weight {
+  background-color: #f3e5f5;
+  color: #7b1fa2;
 }
 
 .actions {
