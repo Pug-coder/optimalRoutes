@@ -12,7 +12,23 @@
         </div>
         <div class="form-group">
           <label for="depot-address">Адрес</label>
-          <input type="text" id="depot-address" v-model="newDepot.address" placeholder="Введите адрес склада">
+          <div class="address-input-group">
+            <input 
+              type="text" 
+              id="depot-address" 
+              v-model="newDepot.address" 
+              placeholder="Введите адрес склада"
+              @input="onAddressChange"
+            >
+            <button 
+              @click="geocodeAddress" 
+              class="btn-geocode"
+              :disabled="!newDepot.address || geocoding"
+              title="Получить координаты по адресу"
+            >
+              {{ geocoding ? '...' : '📍' }}
+            </button>
+          </div>
         </div>
         <div class="form-row">
           <div class="form-group">
@@ -24,7 +40,14 @@
             <input type="number" id="depot-lng" v-model.number="newDepot.longitude" step="0.000001">
           </div>
         </div>
-        <button @click="addDepot" class="btn-primary">Добавить склад</button>
+        <div class="form-actions">
+          <button @click="addDepotWithAddress" class="btn-primary">
+            Добавить склад (автогеокодирование)
+          </button>
+          <button @click="addDepot" class="btn-secondary">
+            Добавить склад (с координатами)
+          </button>
+        </div>
       </div>
     </div>
     
@@ -76,7 +99,8 @@ export default {
         address: '',
         latitude: 55.7558,
         longitude: 37.6173
-      }
+      },
+      geocoding: false
     }
   },
   mounted() {
@@ -139,6 +163,59 @@ export default {
         console.error('Error deleting depot:', error)
         alert('Ошибка при удалении склада')
       }
+    },
+    async geocodeAddress() {
+      this.geocoding = true
+      try {
+        const response = await axios.post(`${API_BASE_URL}/geocoding/geocode`, {
+          address: this.newDepot.address
+        })
+        if (response.data.found) {
+          this.newDepot.latitude = response.data.latitude
+          this.newDepot.longitude = response.data.longitude
+        } else {
+          alert('Не удалось найти координаты для указанного адреса')
+        }
+      } catch (error) {
+        console.error('Error geocoding address:', error)
+        alert('Ошибка при получении координат')
+      } finally {
+        this.geocoding = false
+      }
+    },
+    onAddressChange() {
+      // Reset latitude and longitude when address changes
+      this.newDepot.latitude = null
+      this.newDepot.longitude = null
+    },
+    async addDepotWithAddress() {
+      try {
+        // Validate inputs
+        if (!this.newDepot.name || !this.newDepot.address) {
+          alert('Пожалуйста, заполните название и адрес')
+          return
+        }
+
+        // Подготовка данных для API с автогеокодированием
+        const depotData = {
+          name: this.newDepot.name,
+          address: this.newDepot.address
+        }
+
+        const response = await axios.post(`${API_BASE_URL}/depots/with-address`, depotData)
+        this.depots.push(response.data)
+        
+        // Reset form
+        this.newDepot = {
+          name: '',
+          address: '',
+          latitude: 55.7558,
+          longitude: 37.6173
+        }
+      } catch (error) {
+        console.error('Error adding depot with address:', error)
+        alert('Ошибка при добавлении склада с автоматическим геокодированием')
+      }
     }
   }
 }
@@ -169,6 +246,34 @@ h2 {
   flex: 1;
 }
 
+.address-input-group {
+  position: relative;
+}
+
+.btn-geocode {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  background-color: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  margin: 0;
+  font-size: 16px;
+}
+
+.btn-geocode:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.form-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .btn-primary {
   background-color: #42b983;
   color: white;
@@ -177,7 +282,16 @@ h2 {
   border-radius: 4px;
   cursor: pointer;
   font-size: 14px;
-  align-self: flex-start;
+}
+
+.btn-secondary {
+  background-color: #6c757d;
+  color: white;
+  border: none;
+  padding: 10px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
 }
 
 .btn-danger {

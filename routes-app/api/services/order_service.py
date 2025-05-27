@@ -9,12 +9,100 @@ from datetime import datetime
 import random
 
 from ..models import Order, Location, Depot, Courier
-from ..schemas import OrderCreate, OrderStatusUpdate, OrderResponse, LocationResponse, LocationCreate
+from ..schemas import (
+    OrderCreate, OrderCreateWithAddress, OrderStatusUpdate, OrderResponse, 
+    LocationResponse, LocationCreate
+)
 from ..models.order import OrderStatus
+from ..services.geocoding_service import geocoding_service
 
 
 class OrderService:
     """Сервис для работы с заказами."""
+    
+    @staticmethod
+    async def create_order_with_address(
+        db: AsyncSession, 
+        order_data: OrderCreateWithAddress
+    ) -> Tuple[OrderResponse, Order]:
+        """
+        Создает новый заказ с автоматическим геокодированием адреса.
+        
+        Args:
+            db: Сессия базы данных
+            order_data: Данные для создания заказа с адресом
+            
+        Returns:
+            Кортеж из ответа API и созданного заказа
+            
+        Raises:
+            ValueError: Если адрес не найден или депо не существует
+        """
+        # Проверяем депо, если указано
+        if order_data.depot_id:
+            depot = await OrderService._get_depot(db, order_data.depot_id)
+            if not depot:
+                raise ValueError(f"Депо с ID {order_data.depot_id} не найдено")
+        
+        # Геокодируем адрес
+        coordinates = await geocoding_service.geocode_address(order_data.address)
+        if not coordinates:
+            raise ValueError(f"Не удалось найти координаты для адреса: {order_data.address}")
+        
+        latitude, longitude = coordinates
+        
+        # Создаем местоположение
+        location = Location(
+            id=str(uuid.uuid4()),
+            latitude=latitude,
+            longitude=longitude,
+            address=order_data.address
+        )
+        
+        # Добавляем местоположение в БД
+        db.add(location)
+        await db.flush()
+        
+        # Создаем заказ
+        order = Order(
+            id=uuid.uuid4(),
+            customer_name=order_data.customer_name,
+            customer_phone=order_data.customer_phone,
+            location_id=location.id,
+            items_count=order_data.items_count,
+            weight=order_data.weight,
+            status=OrderStatus.PENDING,
+            depot_id=order_data.depot_id,
+            created_at=datetime.now()
+        )
+        
+        # Добавляем заказ в БД
+        db.add(order)
+        await db.commit()
+        await db.refresh(order)
+        
+        # Создаем объект для ответа
+        location_response = LocationResponse(
+            id=location.id,
+            latitude=location.latitude,
+            longitude=location.longitude,
+            address=location.address
+        )
+        
+        order_response = OrderResponse(
+            id=order.id,
+            customer_name=order.customer_name,
+            customer_phone=order.customer_phone,
+            items_count=order.items_count,
+            weight=order.weight,
+            status=order.status,
+            created_at=order.created_at,
+            courier_id=order.courier_id,
+            depot_id=order.depot_id,
+            location=location_response
+        )
+        
+        return order_response, order
     
     @staticmethod
     async def create_bulk_orders(

@@ -40,6 +40,16 @@ class DepotCreate(DepotBase):
         return self
 
 
+class DepotCreateWithAddress(DepotBase):
+    """Schema for creating a new depot with address only (coordinates will be geocoded)."""
+    address: str = Field(
+        ..., 
+        description="Address of the depot",
+        min_length=3,
+        max_length=200
+    )
+
+
 class DepotResponse(DepotBase):
     """Schema for depot responses."""
     id: UUID = Field(..., description="Depot identifier")

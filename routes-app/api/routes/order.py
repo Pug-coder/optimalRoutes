@@ -5,7 +5,10 @@ from typing import List, Dict, Optional
 from uuid import UUID
 
 from ..services import OrderService
-from ..schemas import OrderCreate, OrderResponse, OrderStatusUpdate, BulkOrderCreate
+from ..schemas import (
+    OrderCreate, OrderCreateWithAddress, OrderResponse, 
+    OrderStatusUpdate, BulkOrderCreate
+)
 from core.database import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -34,6 +37,27 @@ async def create_order(
     """Создать новый заказ."""
     try:
         order, _ = await OrderService.create_order(db, order_data)
+        return order
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Ошибка валидации: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при создании заказа: {str(e)}"
+        )
+
+
+@router.post("/with-address", response_model=OrderResponse)
+async def create_order_with_address(
+    order_data: OrderCreateWithAddress,
+    db: AsyncSession = Depends(get_db)
+):
+    """Создать новый заказ с автоматическим геокодированием адреса."""
+    try:
+        order, _ = await OrderService.create_order_with_address(db, order_data)
         return order
     except ValueError as e:
         raise HTTPException(

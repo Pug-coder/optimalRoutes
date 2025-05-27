@@ -9,7 +9,23 @@
         <div class="form-row">
           <div class="form-group">
             <label for="order-address">Адрес</label>
-            <input type="text" id="order-address" v-model="newOrder.address" placeholder="Введите адрес доставки">
+            <div class="address-input-group">
+              <input 
+                type="text" 
+                id="order-address" 
+                v-model="newOrder.address" 
+                placeholder="Введите адрес доставки"
+                @input="onAddressChange"
+              >
+              <button 
+                @click="geocodeAddress" 
+                class="btn-geocode"
+                :disabled="!newOrder.address || geocoding"
+                title="Получить координаты по адресу"
+              >
+                {{ geocoding ? '...' : '📍' }}
+              </button>
+            </div>
           </div>
           <div class="form-group">
             <label for="order-weight">Вес (кг)</label>
@@ -26,7 +42,14 @@
             <input type="number" id="order-lng" v-model.number="newOrder.longitude" step="0.000001">
           </div>
         </div>
-        <button @click="addOrder" class="btn-primary">Добавить заказ</button>
+        <div class="form-actions">
+          <button @click="addOrderWithAddress" class="btn-primary">
+            Добавить заказ (автогеокодирование)
+          </button>
+          <button @click="addOrder" class="btn-secondary">
+            Добавить заказ (с координатами)
+          </button>
+        </div>
       </div>
     </div>
     
@@ -104,7 +127,8 @@ export default {
         weight: 1.0,
         latitude: 55.7558,
         longitude: 37.6173
-      }
+      },
+      geocoding: false
     }
   },
   mounted() {
@@ -273,7 +297,73 @@ export default {
       } finally {
         this.loading = false
       }
-    }
+    },
+         async geocodeAddress() {
+       this.geocoding = true
+       try {
+         const response = await axios.post(`${API_BASE_URL}/geocoding/geocode`, {
+           address: this.newOrder.address
+         })
+         if (response.data.found) {
+           this.newOrder.latitude = response.data.latitude
+           this.newOrder.longitude = response.data.longitude
+         } else {
+           alert('Не удалось найти координаты для указанного адреса')
+         }
+       } catch (error) {
+         console.error('Error geocoding address:', error)
+         alert('Ошибка при получении координат')
+       } finally {
+         this.geocoding = false
+       }
+     },
+    onAddressChange() {
+      // Reset latitude and longitude when address changes
+      this.newOrder.latitude = null
+      this.newOrder.longitude = null
+    },
+         async addOrderWithAddress() {
+       try {
+         // Validate inputs
+         if (!this.newOrder.address) {
+           alert('Пожалуйста, заполните адрес')
+           return
+         }
+
+         // Подготовка данных для API с автогеокодированием
+         const order = {
+           customer_name: "Клиент",
+           customer_phone: "+7-000-000-0000",
+           weight: parseFloat(this.newOrder.weight),
+           items_count: 1,
+           address: this.newOrder.address
+         }
+
+         const response = await axios.post(`${API_BASE_URL}/orders/with-address`, order)
+         
+         // Add to the beginning of the list if we're on the first page
+         if (this.currentPage === 1) {
+           this.orders.unshift(response.data)
+           if (this.orders.length > this.pageSize) {
+             this.orders.pop()
+           }
+         }
+         
+         // Increment total count
+         this.totalOrders++
+         
+         // Reset form
+         this.newOrder = {
+           address: '',
+           weight: 1.0,
+           latitude: 55.7558,
+           longitude: 37.6173
+         }
+       } catch (error) {
+         console.error('Error adding order with address:', error)
+         alert('Ошибка при добавлении заказа с автоматическим геокодированием')
+       }
+     }
   }
 }
 </script>
@@ -372,5 +462,43 @@ h2 {
 .bulk-actions {
   display: flex;
   gap: 16px;
+}
+
+.address-input-group {
+  position: relative;
+}
+
+.btn-geocode {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  background-color: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  margin: 0;
+  font-size: 16px;
+}
+
+.btn-geocode:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.form-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.btn-secondary {
+  background-color: #6c757d;
+  color: white;
+  border: none;
+  padding: 10px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
 }
 </style> 

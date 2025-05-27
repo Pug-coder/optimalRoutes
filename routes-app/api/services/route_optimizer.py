@@ -208,7 +208,7 @@ class RouteOptimizer:
                         "order_id": order_id,
                         "sequence": j
                     })
-                    
+                
                 routes.append(route)
                 
                 print(f"Маршрут создан для {courier['name']}: "
@@ -361,6 +361,8 @@ class RouteOptimizer:
         
         # Извлекаем маршруты из решения
         routes = []
+        assigned_order_ids = set()
+        
         for vehicle_id in range(len(couriers)):
             route_orders = []
             index = routing.Start(vehicle_id)
@@ -378,6 +380,7 @@ class RouteOptimizer:
                         )
                         if order_in_locations:
                             route_orders.append(order)
+                            assigned_order_ids.add(order_id)
                             break
                 
                 previous_index = index
@@ -411,6 +414,31 @@ class RouteOptimizer:
                     })
                 
                 routes.append(route)
+        
+        # Находим неназначенные заказы
+        unassigned_orders = [
+            order for order in orders 
+            if str(order["id"]) not in assigned_order_ids
+        ]
+        
+        print(f"OR-Tools назначил {len(assigned_order_ids)} из {len(orders)} заказов")
+        
+        # Применяем пост-оптимизацию для неназначенных заказов
+        if unassigned_orders:
+            from ..services.post_optimizer import PostOptimizer
+            
+            post_optimizer = PostOptimizer(use_real_roads=self.use_real_roads)
+            routes, remaining_unassigned = post_optimizer.optimize_unassigned_orders(
+                routes=routes,
+                unassigned_orders=unassigned_orders,
+                couriers=couriers,
+                depot_location=depot_location,
+                distance_matrix=distance_matrix,
+                order_locations=order_locations
+            )
+            
+            if remaining_unassigned:
+                print(f"⚠️ После пост-оптимизации осталось {len(remaining_unassigned)} неназначенных заказов")
         
         return routes
     

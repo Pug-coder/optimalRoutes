@@ -5,7 +5,9 @@ from typing import List, Dict
 from uuid import UUID
 
 from ..services import DepotService, route_optimizer
-from ..schemas import DepotCreate, DepotResponse
+from ..schemas import (
+    DepotCreate, DepotCreateWithAddress, DepotResponse
+)
 from core.database import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -34,6 +36,27 @@ async def create_depot(
     """Создать новое депо."""
     try:
         depot, _ = await DepotService.create_depot(db, depot_data)
+        return depot
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Ошибка валидации: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при создании депо: {str(e)}"
+        )
+
+
+@router.post("/with-address", response_model=DepotResponse)
+async def create_depot_with_address(
+    depot_data: DepotCreateWithAddress,
+    db: AsyncSession = Depends(get_db)
+):
+    """Создать новое депо с автоматическим геокодированием адреса."""
+    try:
+        depot, _ = await DepotService.create_depot_with_address(db, depot_data)
         return depot
     except ValueError as e:
         raise HTTPException(

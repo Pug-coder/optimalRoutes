@@ -1,7 +1,7 @@
 """API-роутер для приложения."""
 
 from fastapi import APIRouter
-from .routes import depot, courier, order, route
+from .routes import depot, courier, order, route, geocoding
 
 # Создаем основной роутер
 router = APIRouter()
@@ -30,6 +30,13 @@ router.include_router(
     prefix="/routes",
     tags=["routes"]
 )
+
+router.include_router(
+    geocoding.router,
+    prefix="/geocoding",
+    tags=["geocoding"]
+)
+
 
 # Роут статуса для проверки работоспособности
 @router.get("/health")

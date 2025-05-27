@@ -6,7 +6,10 @@ from uuid import UUID
 import uuid
 
 from ..models import Depot, Location, Courier, Order
-from ..schemas import DepotCreate, DepotResponse, LocationResponse
+from ..schemas import (
+    DepotCreate, DepotCreateWithAddress, DepotResponse, LocationResponse
+)
+from ..services.geocoding_service import geocoding_service
 
 
 class DepotService:
@@ -129,6 +132,80 @@ class DepotService:
             latitude=depot_data.location.latitude,
             longitude=depot_data.location.longitude,
             address=depot_data.location.address
+        )
+        
+        # Добавляем местоположение в базу данных
+        db.add(location)
+        await db.flush()  # Выполняем, чтобы получить ID
+        
+        # Создаем депо
+        depot = Depot(
+            id=uuid.uuid4(),
+            name=depot_data.name,
+            location_id=location.id
+        )
+        
+        # Добавляем депо в базу данных
+        db.add(depot)
+        await db.commit()  # Фиксируем изменения
+        await db.refresh(depot)  # Обновляем объект из базы данных
+        
+        # Создаем объект ответа
+        location_response = LocationResponse(
+            id=location.id,
+            latitude=location.latitude,
+            longitude=location.longitude,
+            address=location.address
+        )
+        
+        depot_response = DepotResponse(
+            id=depot.id,
+            name=depot.name,
+            location=location_response
+        )
+        
+        return depot_response, depot
+    
+    @staticmethod
+    async def create_depot_with_address(
+        db: AsyncSession, 
+        depot_data: DepotCreateWithAddress
+    ) -> Tuple[DepotResponse, Depot]:
+        """
+        Создает новое депо с автоматическим геокодированием адреса.
+        
+        Args:
+            db: Сессия базы данных
+            depot_data: Данные для создания депо с адресом
+            
+        Returns:
+            Кортеж из ответа API и созданного депо
+            
+        Raises:
+            ValueError: Если адрес не найден или депо с таким именем уже существует
+        """
+        # Проверяем уникальность имени
+        existing_depot = await DepotService._get_depot_by_name(
+            db, depot_data.name
+        )
+        if existing_depot:
+            raise ValueError(
+                f"Депо с именем '{depot_data.name}' уже существует"
+            )
+        
+        # Геокодируем адрес
+        coordinates = await geocoding_service.geocode_address(depot_data.address)
+        if not coordinates:
+            raise ValueError(f"Не удалось найти координаты для адреса: {depot_data.address}")
+        
+        latitude, longitude = coordinates
+        
+        # Создаем местоположение
+        location = Location(
+            id=str(uuid.uuid4()),
+            latitude=latitude,
+            longitude=longitude,
+            address=depot_data.address
         )
         
         # Добавляем местоположение в базу данных

@@ -73,6 +73,20 @@ class OrderCreate(OrderBase):
         return self
 
 
+class OrderCreateWithAddress(OrderBase):
+    """Schema for creating a new order with address only (coordinates will be geocoded)."""
+    address: str = Field(
+        ..., 
+        description="Delivery address",
+        min_length=3,
+        max_length=200
+    )
+    depot_id: Optional[UUID] = Field(
+        None, 
+        description="ID of assigned depot"
+    )
+
+
 class OrderResponse(OrderBase):
     """Schema for order responses."""
     id: UUID = Field(..., description="Order identifier")
