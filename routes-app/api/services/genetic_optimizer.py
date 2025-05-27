@@ -32,7 +32,7 @@ class GeneticOptimizer:
     
     def __init__(
         self, 
-        population_size: int = 50,  # Уменьшил для быстрой сходимости
+        population_size: int = 100,  # Уменьшил для быстрой сходимости
         max_generations: int = 200,  # Увеличил для лучшего поиска
         mutation_rate: float = 0.2,  # Увеличил для большего разнообразия
         crossover_rate: float = 0.8,
@@ -327,7 +327,9 @@ class GeneticOptimizer:
         self.order_indices = {}
         for order_id, order_data in self.orders.items():
             print(f"Processing order {order_id}: status={order_data.get('status')}")
-            if order_data.get("status") == "pending":
+            # Принимаем заказы со статусом "pending" или без статуса (None)
+            status = order_data.get("status")
+            if status == "pending" or status is None:
                 order_location = self._create_location_from_dict(
                     order_data.get("location", {})
                 )
@@ -460,9 +462,19 @@ class GeneticOptimizer:
                 for order_id in remaining_orders:
                     order_data = self.orders[order_id]
                     order_load = order_data.get("items_count", 1)
+                    order_weight = order_data.get("weight", 1.0)
                     
-                    # Check if adding this order exceeds capacity
-                    if current_capacity + order_load <= max_capacity:
+                    # Check if adding this order exceeds capacity (items and weight)
+                    max_weight = courier_data.get("max_weight", 50.0)
+                    current_weight = sum(
+                        self.orders[point["order_id"]].get("weight", 1.0)
+                        for point in route["points"]
+                    )
+                    
+                    items_ok = current_capacity + order_load <= max_capacity
+                    weight_ok = current_weight + order_weight <= max_weight
+                    
+                    if items_ok and weight_ok:
                         # Create temporary route to check distance constraint
                         temp_route = {
                             "courier_id": courier_id,
@@ -532,9 +544,19 @@ class GeneticOptimizer:
                     for order_id in remaining_orders:
                         order_data = self.orders[order_id]
                         order_load = order_data.get("items_count", 1)
+                        order_weight = order_data.get("weight", 1.0)
                         
-                        # Check if adding this order exceeds capacity
-                        if current_load + order_load <= max_capacity:
+                        # Check if adding this order exceeds capacity (items and weight)
+                        max_weight = courier_data.get("max_weight", 50.0)
+                        current_weight = sum(
+                            self.orders[point["order_id"]].get("weight", 1.0)
+                            for point in route["points"]
+                        )
+                        
+                        items_ok = current_load + order_load <= max_capacity
+                        weight_ok = current_weight + order_weight <= max_weight
+                        
+                        if items_ok and weight_ok:
                             # Create temporary route to check distance constraint
                             temp_route = {
                                 "courier_id": route["courier_id"],
@@ -617,9 +639,19 @@ class GeneticOptimizer:
             for order_id in remaining_orders:
                 order_data = self.orders[order_id]
                 order_load = order_data.get("items_count", 1)
+                order_weight = order_data.get("weight", 1.0)
                 
-                # Check if adding this order exceeds capacity
-                if current_load + order_load <= max_capacity:
+                # Check if adding this order exceeds capacity (items and weight)
+                max_weight = courier_data.get("max_weight", 50.0)
+                current_weight = sum(
+                    self.orders[point["order_id"]].get("weight", 1.0)
+                    for point in route["points"]
+                )
+                
+                items_ok = current_load + order_load <= max_capacity
+                weight_ok = current_weight + order_weight <= max_weight
+                
+                if items_ok and weight_ok:
                     # Create temporary route to check distance constraint
                     temp_route = {
                         "courier_id": route["courier_id"],
@@ -713,9 +745,19 @@ class GeneticOptimizer:
                 for order_id in remaining_orders:
                     order_data = self.orders[order_id]
                     order_load = order_data.get("items_count", 1)
+                    order_weight = order_data.get("weight", 1.0)
                     
-                    # Check if adding this order exceeds capacity
-                    if current_load + order_load <= max_capacity:
+                    # Check if adding this order exceeds capacity (items and weight)
+                    max_weight = courier_data.get("max_weight", 50.0)
+                    current_weight = sum(
+                        self.orders[point["order_id"]].get("weight", 1.0)
+                        for point in existing_route["points"]
+                    )
+                    
+                    items_ok = current_load + order_load <= max_capacity
+                    weight_ok = current_weight + order_weight <= max_weight
+                    
+                    if items_ok and weight_ok:
                         # Create temporary route to check distance constraint
                         temp_route = {
                             "courier_id": courier_id,
@@ -800,15 +842,22 @@ class GeneticOptimizer:
         last_order_idx = self.order_indices[last_order_id]
         total_distance += self.distance_matrix[last_order_idx][depot_idx]
         
-        # Calculate total load
+        # Calculate total load (items count)
         total_load = sum(
             self.orders[point["order_id"]].get("items_count", 1) 
+            for point in route["points"]
+        )
+        
+        # Calculate total weight
+        total_weight = sum(
+            self.orders[point["order_id"]].get("weight", 1.0) 
             for point in route["points"]
         )
         
         # Update route
         route["total_distance"] = total_distance
         route["total_load"] = total_load
+        route["total_weight"] = total_weight
         
     def _calculate_fitness(self, routes: List[Dict[str, Any]]) -> float:
         """
@@ -844,20 +893,40 @@ class GeneticOptimizer:
         # Heavy penalty for unassigned orders
         unassigned_penalty = len(unassigned_orders) * 1000.0
         
-        # NEW: Heavy penalty for routes exceeding distance constraints
-        distance_violation_penalty = 0.0
+        # Heavy penalty for routes exceeding constraints
+        constraint_violation_penalty = 0.0
         for route in routes:
             courier_data = self.couriers[route["courier_id"]]
             max_distance = courier_data.get("max_distance", 50.0)
+            max_capacity = courier_data.get("max_capacity", 10)
+            max_weight = courier_data.get("max_weight", 50.0)
             
+            # Check distance constraint
             if route["total_distance"] > max_distance:
-                # Penalty proportional to the violation
                 violation = route["total_distance"] - max_distance
-                distance_violation_penalty += violation * 10000.0  # Much heavier penalty
+                constraint_violation_penalty += violation * 10000.0
+            
+            # Check items capacity constraint
+            total_items = sum(
+                self.orders[point["order_id"]].get("items_count", 1)
+                for point in route["points"]
+            )
+            if total_items > max_capacity:
+                violation = total_items - max_capacity
+                constraint_violation_penalty += violation * 10000.0
+            
+            # Check weight constraint
+            total_weight = sum(
+                self.orders[point["order_id"]].get("weight", 1.0)
+                for point in route["points"]
+            )
+            if total_weight > max_weight:
+                violation = total_weight - max_weight
+                constraint_violation_penalty += violation * 10000.0
         
         # Main fitness components
         fitness = (total_distance + (num_routes * 10.0) + 
-                  unassigned_penalty + distance_violation_penalty)
+                  unassigned_penalty + constraint_violation_penalty)
         
         return fitness
         
@@ -1090,8 +1159,18 @@ class GeneticOptimizer:
                             "items_count", 1
                         )
                         
-                        # Check if target route can accommodate this order
-                        if current_load + order_load <= max_capacity:
+                        # Check if target route can accommodate this order (items and weight)
+                        max_weight = courier_data.get("max_weight", 50.0)
+                        current_weight = sum(
+                            self.orders[point["order_id"]].get("weight", 1.0)
+                            for point in target_route["points"]
+                        )
+                        order_weight = self.orders[point["order_id"]].get("weight", 1.0)
+                        
+                        items_ok = current_load + order_load <= max_capacity
+                        weight_ok = current_weight + order_weight <= max_weight
+                        
+                        if items_ok and weight_ok:
                             # Remove from source
                             source_route["points"].pop(point_idx)
                             

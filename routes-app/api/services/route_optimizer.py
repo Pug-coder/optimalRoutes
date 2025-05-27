@@ -129,7 +129,8 @@ class RouteOptimizer:
         for courier in couriers:
             courier_routes[courier["id"]] = {
                 "orders": [],
-                "current_load": 0,
+                "current_load": 0,  # количество товаров
+                "current_weight": 0.0,  # общий вес
                 "courier": courier
             }
         
@@ -147,11 +148,16 @@ class RouteOptimizer:
                 route_info = courier_routes[courier_id]
                 
                 order_load = order.get("items_count", 1)
+                order_weight = order.get("weight", 1.0)
                 courier_capacity = courier.get("max_capacity", 10)
+                courier_max_weight = courier.get("max_weight", 50.0)
                 courier_max_distance = courier.get("max_distance", 50.0)
                 
-                # Проверяем ограничения по грузоподъемности
-                if route_info["current_load"] + order_load <= courier_capacity:
+                # Проверяем ограничения по грузоподъемности (товары и вес)
+                items_ok = route_info["current_load"] + order_load <= courier_capacity
+                weight_ok = route_info["current_weight"] + order_weight <= courier_max_weight
+                
+                if items_ok and weight_ok:
                     # Временно добавляем заказ для проверки расстояния
                     temp_orders = route_info["orders"] + [order]
                     
@@ -165,9 +171,11 @@ class RouteOptimizer:
                         # Назначаем заказ этому курьеру
                         route_info["orders"].append(order)
                         route_info["current_load"] += order_load
+                        route_info["current_weight"] += order_weight
                         assigned = True
                         print(f"Заказ {order['id']} назначен курьеру {courier['name']} "
-                              f"(груз: {route_info['current_load']}/{courier_capacity}, "
+                              f"(товары: {route_info['current_load']}/{courier_capacity}, "
+                              f"вес: {route_info['current_weight']:.1f}/{courier_max_weight}, "
                               f"расст: {temp_optimized['total_distance']:.2f}/{courier_max_distance})")
                 
                 # Переходим к следующему курьеру
@@ -195,6 +203,7 @@ class RouteOptimizer:
                     "depot_id": str(depot_data.get("id")),
                     "total_distance": optimized_route["total_distance"],
                     "total_load": route_info["current_load"],
+                    "total_weight": route_info["current_weight"],
                     "points": []
                 }
                 
@@ -213,7 +222,8 @@ class RouteOptimizer:
                 
                 print(f"Маршрут создан для {courier['name']}: "
                       f"{len(route_info['orders'])} заказов, "
-                      f"{route_info['current_load']} груза, "
+                      f"{route_info['current_load']} товаров, "
+                      f"{route_info['current_weight']:.1f} кг, "
                       f"{optimized_route['total_distance']:.2f} км")
             
         return routes
@@ -225,7 +235,8 @@ class RouteOptimizer:
         couriers: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
         """
-        Оптимизация маршрутов с использованием OR-Tools.
+        Оптимизация маршрутов с использованием OR-Tools CVRP.
+        Реализация согласно официальной документации Google OR-Tools.
         """
         if not OR_TOOLS_AVAILABLE:
             print("OR-Tools not available, falling back to nearest neighbor")
@@ -236,7 +247,7 @@ class RouteOptimizer:
         # Создаем список локаций
         locations = []
         
-        # Добавляем депо как первую локацию
+        # Добавляем депо как первую локацию (индекс 0)
         depot_location = self._create_location_from_dict(
             depot_data.get("location", {})
         )
@@ -268,9 +279,12 @@ class RouteOptimizer:
         # Преобразуем в целые числа для OR-Tools (умножаем на 1000)
         distance_matrix_int = (distance_matrix * 1000).astype(int)
         
-        # Создаем модель OR-Tools
+        # Создаем модель OR-Tools для Single-Depot CVRP
+        # Все курьеры начинают и заканчивают в депо (индекс 0)
         manager = pywrapcp.RoutingIndexManager(
-            len(locations), len(couriers), 0
+            len(locations),  # количество локаций
+            len(couriers),   # количество курьеров (транспортных средств)
+            0                # индекс депо (все курьеры начинают и заканчивают здесь)
         )
         routing = pywrapcp.RoutingModel(manager)
         
@@ -280,67 +294,104 @@ class RouteOptimizer:
             to_node = manager.IndexToNode(to_index)
             return distance_matrix_int[from_node][to_node]
         
-        transit_callback_index = routing.RegisterTransitCallback(
-            distance_callback
-        )
+        transit_callback_index = routing.RegisterTransitCallback(distance_callback)
         routing.SetArcCostEvaluatorOfAllVehicles(transit_callback_index)
         
-        # Добавляем ограничения по грузоподъемности
+        # Создаем массив demands (спрос) для каждой локации
+        # Индекс 0 (депо) имеет спрос 0, остальные - согласно заказам
         demands = [0]  # Депо не имеет спроса
-        for order in orders:
-            order_id = str(order["id"])
-            if order_id in order_locations:
-                demands.append(order.get("items_count", 1))
         
+        for i in range(1, len(locations)):
+            # Находим заказ для этой локации
+            demand = 0
+            for order in orders:
+                order_id = str(order["id"])
+                if order_id in order_locations and order_locations[order_id] == i:
+                    demand = order.get("items_count", 1)
+                    break
+            demands.append(demand)
+        
+        # Функция для получения спроса по индексу
         def demand_callback(from_index):
             from_node = manager.IndexToNode(from_index)
             return demands[from_node]
         
-        demand_callback_index = routing.RegisterUnaryTransitCallback(
-            demand_callback
-        )
+        demand_callback_index = routing.RegisterUnaryTransitCallback(demand_callback)
         
-        # Собираем все грузоподъемности курьеров в один список
+        # Создаем массив грузоподъемностей курьеров
         vehicle_capacities = []
         for courier in couriers:
             capacity = courier.get("max_capacity", 10)
             vehicle_capacities.append(capacity)
         
-        # Добавляем одно измерение с ограничениями по грузоподъемности для всех курьеров
+        # Добавляем ограничение по грузоподъемности согласно документации OR-Tools
         routing.AddDimensionWithVehicleCapacity(
             demand_callback_index,
-            0,  # null capacity slack
-            vehicle_capacities,  # список грузоподъемностей для всех курьеров
-            True,  # start cumul to zero
+            0,                    # null capacity slack
+            vehicle_capacities,   # список грузоподъемностей курьеров
+            True,                 # start cumul to zero
             'Capacity'
         )
         
-        # Добавляем индивидуальные ограничения по расстоянию для каждого курьера
+        # Добавляем ограничения по весу как отдельное измерение
+        demands_weight = [0]  # Депо не имеет веса
+        
+        for i in range(1, len(locations)):
+            # Находим заказ для этой локации
+            weight = 0
+            for order in orders:
+                order_id = str(order["id"])
+                if order_id in order_locations and order_locations[order_id] == i:
+                    # Умножаем на 1000 для OR-Tools (граммы вместо кг)
+                    weight = int(order.get("weight", 1.0) * 1000)
+                    break
+            demands_weight.append(weight)
+        
+        def weight_callback(from_index):
+            from_node = manager.IndexToNode(from_index)
+            return demands_weight[from_node]
+        
+        weight_callback_index = routing.RegisterUnaryTransitCallback(weight_callback)
+        
+        # Создаем массив ограничений по весу для курьеров
+        vehicle_weight_capacities = []
+        for courier in couriers:
+            # Умножаем на 1000 для OR-Tools (граммы вместо кг)
+            weight_capacity = int(courier.get("max_weight", 50.0) * 1000)
+            vehicle_weight_capacities.append(weight_capacity)
+        
+        # Добавляем ограничение по весу
+        routing.AddDimensionWithVehicleCapacity(
+            weight_callback_index,
+            0,                          # null capacity slack
+            vehicle_weight_capacities,  # список ограничений по весу
+            True,                       # start cumul to zero
+            'Weight'
+        )
+        
+        # Добавляем ограничение по расстоянию
+        routing.AddDimension(
+            transit_callback_index,
+            0,                          # no slack
+            int(50.0 * 1000),          # максимальное расстояние в метрах (50 км)
+            True,                       # start cumul to zero
+            'Distance'
+        )
+        
+        # Получаем измерение расстояния для настройки штрафов
+        distance_dimension = routing.GetDimensionOrDie('Distance')
+        
+        # Устанавливаем индивидуальные ограничения по расстоянию для каждого курьера
         for vehicle_id, courier in enumerate(couriers):
-            max_distance_meters = int(
-                courier.get("max_distance", 50.0) * 1000
-            )
-            
-            # Создаем уникальное измерение расстояния для каждого курьера
-            dimension_name = f'Distance_{vehicle_id}'
-            routing.AddDimension(
-                transit_callback_index,
-                0,  # no slack
-                max_distance_meters,  # индивидуальное ограничение
-                True,  # start cumul to zero
-                dimension_name
-            )
-            
-            # Получаем измерение и устанавливаем ограничение
-            distance_dimension = routing.GetDimensionOrDie(dimension_name)
-            
-            # Устанавливаем ограничение только для конкретного курьера
+            max_distance_meters = int(courier.get("max_distance", 50.0) * 1000)
             end_index = routing.End(vehicle_id)
+            
+            # Устанавливаем мягкое ограничение с штрафом
             distance_dimension.SetCumulVarSoftUpperBound(
                 end_index, max_distance_meters, 100000
             )
         
-        # Настройки поиска
+        # Настройки поиска согласно документации OR-Tools
         search_parameters = pywrapcp.DefaultRoutingSearchParameters()
         search_parameters.first_solution_strategy = (
             routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
@@ -350,14 +401,27 @@ class RouteOptimizer:
         )
         search_parameters.time_limit.seconds = 30
         
+        # Добавляем диагностику
+        print(f"OR-Tools CVRP setup:")
+        print(f"  Locations: {len(locations)} (depot + {len(orders)} orders)")
+        print(f"  Vehicles: {len(couriers)}")
+        print(f"  Total demand: {sum(demands)} items")
+        print(f"  Total capacity: {sum(vehicle_capacities)} items")
+        print(f"  Total weight demand: {sum(demands_weight)/1000:.1f} kg")
+        print(f"  Total weight capacity: {sum(vehicle_weight_capacities)/1000:.1f} kg")
+        
         # Решаем задачу
+        print("Starting OR-Tools CVRP optimization...")
         solution = routing.SolveWithParameters(search_parameters)
         
         if not solution:
-            print("OR-Tools couldn't find solution, using nearest neighbor")
+            print("No solution found by OR-Tools")
+            # Fallback to nearest neighbor
             return await self._optimize_with_nearest_neighbor(
                 depot_data, orders, couriers
             )
+        
+        print("OR-Tools solution found!")
         
         # Извлекаем маршруты из решения
         routes = []
@@ -367,20 +431,22 @@ class RouteOptimizer:
             route_orders = []
             index = routing.Start(vehicle_id)
             route_distance = 0
+            route_load = 0
+            route_weight = 0
             
             while not routing.IsEnd(index):
                 node_index = manager.IndexToNode(index)
-                if node_index > 0:  # Пропускаем депо
+                
+                if node_index > 0:  # Пропускаем депо (индекс 0)
                     # Находим заказ по индексу локации
                     for order in orders:
                         order_id = str(order["id"])
-                        order_in_locations = (
-                            order_id in order_locations and 
-                            order_locations[order_id] == node_index
-                        )
-                        if order_in_locations:
+                        if (order_id in order_locations and 
+                            order_locations[order_id] == node_index):
                             route_orders.append(order)
                             assigned_order_ids.add(order_id)
+                            route_load += order.get("items_count", 1)
+                            route_weight += order.get("weight", 1.0)
                             break
                 
                 previous_index = index
@@ -396,49 +462,36 @@ class RouteOptimizer:
                     "courier_id": str(couriers[vehicle_id]["id"]),
                     "depot_id": str(depot_data.get("id")),
                     "total_distance": route_distance / 1000.0,  # Обратно в км
-                    "total_load": sum(
-                        order.get("items_count", 1) for order in route_orders
-                    ),
+                    "total_load": route_load,
+                    "total_weight": route_weight,
                     "points": []
                 }
                 
-                # Добавляем точки маршрута
+                # Добавляем точки маршрута в правильном порядке
                 for j, order in enumerate(route_orders):
-                    order_id = order["id"]
-                    if not isinstance(order_id, str):
-                        order_id = str(order_id)
-                    
                     route["points"].append({
-                        "order_id": order_id,
+                        "order_id": str(order["id"]),
                         "sequence": j
                     })
                 
                 routes.append(route)
+                
+                # Диагностика маршрута
+                courier = couriers[vehicle_id]
+                print(f"  Route {vehicle_id + 1}: {len(route_orders)} orders, "
+                      f"{route_load}/{courier.get('max_capacity', 10)} items, "
+                      f"{route_weight:.1f}/{courier.get('max_weight', 50.0)} kg, "
+                      f"{route_distance/1000:.1f}/{courier.get('max_distance', 50.0)} km")
         
-        # Находим неназначенные заказы
+        # Проверяем неназначенные заказы
         unassigned_orders = [
             order for order in orders 
             if str(order["id"]) not in assigned_order_ids
         ]
         
-        print(f"OR-Tools назначил {len(assigned_order_ids)} из {len(orders)} заказов")
-        
-        # Применяем пост-оптимизацию для неназначенных заказов
+        print(f"OR-Tools assigned {len(assigned_order_ids)} of {len(orders)} orders")
         if unassigned_orders:
-            from ..services.post_optimizer import PostOptimizer
-            
-            post_optimizer = PostOptimizer(use_real_roads=self.use_real_roads)
-            routes, remaining_unassigned = post_optimizer.optimize_unassigned_orders(
-                routes=routes,
-                unassigned_orders=unassigned_orders,
-                couriers=couriers,
-                depot_location=depot_location,
-                distance_matrix=distance_matrix,
-                order_locations=order_locations
-            )
-            
-            if remaining_unassigned:
-                print(f"⚠️ После пост-оптимизации осталось {len(remaining_unassigned)} неназначенных заказов")
+            print(f"Unassigned orders: {len(unassigned_orders)}")
         
         return routes
     
@@ -481,6 +534,9 @@ class RouteOptimizer:
                 "total_distance": 0.0,
                 "total_load": sum(
                     order.get("items_count", 1) for order in courier_orders
+                ),
+                "total_weight": sum(
+                    order.get("weight", 1.0) for order in courier_orders
                 ),
                 "points": []
             }
@@ -1087,6 +1143,421 @@ class RouteOptimizer:
             orders_by_depot[best_depot_id].append(order)
         
         return orders_by_depot
+
+    async def _optimize_with_or_tools_relaxed(
+        self,
+        depot_data: Dict[str, Any],
+        orders: List[Dict[str, Any]], 
+        couriers: List[Dict[str, Any]],
+        distance_matrix: np.ndarray,
+        order_locations: Dict[str, int],
+        locations: List[Location]
+    ) -> Optional[List[Dict[str, Any]]]:
+        """
+        Упрощенная версия OR-Tools с более мягкими ограничениями.
+        """
+        try:
+            # Преобразуем в целые числа для OR-Tools
+            distance_matrix_int = (distance_matrix * 1000).astype(int)
+            
+            # Создаем модель OR-Tools
+            manager = pywrapcp.RoutingIndexManager(
+                len(locations), len(couriers), 0
+            )
+            routing = pywrapcp.RoutingModel(manager)
+            
+            # Функция расчета расстояния
+            def distance_callback(from_index, to_index):
+                from_node = manager.IndexToNode(from_index)
+                to_node = manager.IndexToNode(to_index)
+                return distance_matrix_int[from_node][to_node]
+            
+            transit_callback_index = routing.RegisterTransitCallback(
+                distance_callback
+            )
+            routing.SetArcCostEvaluatorOfAllVehicles(transit_callback_index)
+            
+            # Только базовые ограничения по количеству товаров
+            demands_items = [0]  # Депо
+            for i in range(1, len(locations)):
+                demand = 0
+                for order in orders:
+                    order_id = str(order["id"])
+                    if (order_id in order_locations and 
+                        order_locations[order_id] == i):
+                        demand = order.get("items_count", 1)
+                        break
+                demands_items.append(demand)
+            
+            def demand_items_callback(from_index):
+                from_node = manager.IndexToNode(from_index)
+                return demands_items[from_node]
+            
+            demand_items_callback_index = routing.RegisterUnaryTransitCallback(
+                demand_items_callback
+            )
+            
+            vehicle_capacities_items = [
+                courier.get("max_capacity", 10) for courier in couriers
+            ]
+            
+            routing.AddDimensionWithVehicleCapacity(
+                demand_items_callback_index,
+                0,
+                vehicle_capacities_items,
+                True,
+                'CapacityItems'
+            )
+            
+            # Более мягкие настройки поиска
+            search_parameters = pywrapcp.DefaultRoutingSearchParameters()
+            search_parameters.first_solution_strategy = (
+                routing_enums_pb2.FirstSolutionStrategy.SAVINGS
+            )
+            search_parameters.time_limit.seconds = 60
+            
+            # Решаем задачу
+            solution = routing.SolveWithParameters(search_parameters)
+            
+            if not solution:
+                return None
+            
+            # Извлекаем маршруты
+            routes = []
+            for vehicle_id in range(len(couriers)):
+                route_orders = []
+                index = routing.Start(vehicle_id)
+                route_distance = 0
+                
+                while not routing.IsEnd(index):
+                    node_index = manager.IndexToNode(index)
+                    if node_index > 0:
+                        for order in orders:
+                            order_id = str(order["id"])
+                            if (order_id in order_locations and 
+                                order_locations[order_id] == node_index):
+                                route_orders.append(order)
+                                break
+                    
+                    previous_index = index
+                    index = solution.Value(routing.NextVar(index))
+                    route_distance += routing.GetArcCostForVehicle(
+                        previous_index, index, vehicle_id
+                    )
+                
+                if route_orders:
+                    route = {
+                        "id": str(uuid.uuid4()),
+                        "courier_id": str(couriers[vehicle_id]["id"]),
+                        "depot_id": str(depot_data.get("id")),
+                        "total_distance": route_distance / 1000.0,
+                        "total_load": sum(
+                            order.get("items_count", 1) for order in route_orders
+                        ),
+                        "total_weight": sum(
+                            order.get("weight", 1.0) for order in route_orders
+                        ),
+                        "points": []
+                    }
+                    
+                    for j, order in enumerate(route_orders):
+                        route["points"].append({
+                            "order_id": str(order["id"]),
+                            "sequence": j
+                        })
+                    
+                    routes.append(route)
+            
+            return routes
+            
+        except Exception as e:
+            print(f"Error in relaxed OR-Tools: {e}")
+            return None
+
+    async def _optimize_with_or_tools_multi_depot(
+        self,
+        depots_data: List[Dict[str, Any]],
+        orders: List[Dict[str, Any]], 
+        couriers: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        Оптимизация маршрутов для Multi-Depot VRP с использованием OR-Tools.
+        Реализация согласно официальной документации Google OR-Tools.
+        """
+        if not OR_TOOLS_AVAILABLE:
+            print("OR-Tools not available, falling back to multi-depot nearest neighbor")
+            return await self.optimize_routes_multi_depot(
+                depots_data, orders, couriers, "nearest_neighbor"
+            )
+        
+        if not orders or not couriers or not depots_data:
+            return []
+        
+        # Создаем список всех локаций: сначала депо, потом заказы
+        locations = []
+        depot_indices = {}
+        
+        # Добавляем все депо в начало списка локаций
+        for depot_data in depots_data:
+            depot_location = self._create_location_from_dict(
+                depot_data.get("location", {})
+            )
+            if depot_location:
+                depot_indices[str(depot_data.get("id"))] = len(locations)
+                locations.append(depot_location)
+        
+        # Добавляем локации заказов
+        order_locations = {}
+        for order in orders:
+            order_location = self._create_location_from_dict(
+                order.get("location", {})
+            )
+            if order_location:
+                locations.append(order_location)
+                order_locations[str(order["id"])] = len(locations) - 1
+        
+        if not order_locations or not depot_indices:
+            return []
+        
+        # Рассчитываем матрицу расстояний
+        distance_matrix = self._compute_distance_matrix(locations)
+        distance_matrix_int = (distance_matrix * 1000).astype(int)
+        
+        # Создаем массивы стартовых и конечных точек для каждого курьера
+        starts = []
+        ends = []
+        
+        for courier in couriers:
+            courier_depot_id = str(courier.get("depot_id"))
+            depot_index = depot_indices.get(courier_depot_id, 0)
+            starts.append(depot_index)
+            ends.append(depot_index)
+        
+        # Создаем модель OR-Tools для Multi-Depot VRP
+        manager = pywrapcp.RoutingIndexManager(
+            len(locations),  # количество локаций
+            len(couriers),   # количество курьеров
+            starts,          # стартовые точки для каждого курьера
+            ends             # конечные точки для каждого курьера
+        )
+        routing = pywrapcp.RoutingModel(manager)
+        
+        # Функция расчета расстояния
+        def distance_callback(from_index, to_index):
+            from_node = manager.IndexToNode(from_index)
+            to_node = manager.IndexToNode(to_index)
+            return distance_matrix_int[from_node][to_node]
+        
+        transit_callback_index = routing.RegisterTransitCallback(distance_callback)
+        routing.SetArcCostEvaluatorOfAllVehicles(transit_callback_index)
+        
+        # Создаем массив demands для всех локаций
+        demands = []
+        
+        # Депо имеют спрос 0
+        for _ in depots_data:
+            demands.append(0)
+        
+        # Заказы имеют спрос согласно items_count
+        for i in range(len(depots_data), len(locations)):
+            demand = 0
+            for order in orders:
+                order_id = str(order["id"])
+                if (order_id in order_locations and 
+                    order_locations[order_id] == i):
+                    demand = order.get("items_count", 1)
+                    break
+            demands.append(demand)
+        
+        # Функция для получения спроса
+        def demand_callback(from_index):
+            from_node = manager.IndexToNode(from_index)
+            return demands[from_node]
+        
+        demand_callback_index = routing.RegisterUnaryTransitCallback(demand_callback)
+        
+        # Создаем массив грузоподъемностей курьеров
+        vehicle_capacities = []
+        for courier in couriers:
+            capacity = courier.get("max_capacity", 10)
+            vehicle_capacities.append(capacity)
+        
+        # Добавляем ограничение по грузоподъемности
+        routing.AddDimensionWithVehicleCapacity(
+            demand_callback_index,
+            0,                    # null capacity slack
+            vehicle_capacities,   # список грузоподъемностей курьеров
+            True,                 # start cumul to zero
+            'Capacity'
+        )
+        
+        # Добавляем ограничения по весу
+        demands_weight = []
+        
+        # Депо имеют вес 0
+        for _ in depots_data:
+            demands_weight.append(0)
+        
+        # Заказы имеют вес согласно weight
+        for i in range(len(depots_data), len(locations)):
+            weight = 0
+            for order in orders:
+                order_id = str(order["id"])
+                if (order_id in order_locations and 
+                    order_locations[order_id] == i):
+                    weight = int(order.get("weight", 1.0) * 1000)
+                    break
+            demands_weight.append(weight)
+        
+        def weight_callback(from_index):
+            from_node = manager.IndexToNode(from_index)
+            return demands_weight[from_node]
+        
+        weight_callback_index = routing.RegisterUnaryTransitCallback(weight_callback)
+        
+        # Создаем массив ограничений по весу
+        vehicle_weight_capacities = []
+        for courier in couriers:
+            weight_capacity = int(courier.get("max_weight", 50.0) * 1000)
+            vehicle_weight_capacities.append(weight_capacity)
+        
+        # Добавляем ограничение по весу
+        routing.AddDimensionWithVehicleCapacity(
+            weight_callback_index,
+            0,                          # null capacity slack
+            vehicle_weight_capacities,  # список ограничений по весу
+            True,                       # start cumul to zero
+            'Weight'
+        )
+        
+        # Добавляем ограничение по расстоянию
+        routing.AddDimension(
+            transit_callback_index,
+            0,                          # no slack
+            int(100.0 * 1000),         # максимальное расстояние в метрах (100 км)
+            True,                       # start cumul to zero
+            'Distance'
+        )
+        
+        # Получаем измерение расстояния
+        distance_dimension = routing.GetDimensionOrDie('Distance')
+        
+        # Устанавливаем индивидуальные ограничения по расстоянию
+        for vehicle_id, courier in enumerate(couriers):
+            max_distance_meters = int(courier.get("max_distance", 50.0) * 1000)
+            end_index = routing.End(vehicle_id)
+            
+            distance_dimension.SetCumulVarSoftUpperBound(
+                end_index, max_distance_meters, 100000
+            )
+        
+        # Настройки поиска
+        search_parameters = pywrapcp.DefaultRoutingSearchParameters()
+        search_parameters.first_solution_strategy = (
+            routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
+        )
+        search_parameters.local_search_metaheuristic = (
+            routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
+        )
+        search_parameters.time_limit.seconds = 60  # Больше времени для Multi-Depot
+        
+        # Диагностика
+        print(f"OR-Tools Multi-Depot CVRP setup:")
+        print(f"  Depots: {len(depots_data)}")
+        print(f"  Locations: {len(locations)} (depots + orders)")
+        print(f"  Vehicles: {len(couriers)}")
+        print(f"  Total demand: {sum(demands)} items")
+        print(f"  Total capacity: {sum(vehicle_capacities)} items")
+        
+        # Решаем задачу
+        print("Starting OR-Tools Multi-Depot CVRP optimization...")
+        solution = routing.SolveWithParameters(search_parameters)
+        
+        if not solution:
+            print("No solution found by OR-Tools Multi-Depot")
+            # Fallback to depot-by-depot optimization
+            return await self.optimize_routes_multi_depot(
+                depots_data, orders, couriers, "nearest_neighbor"
+            )
+        
+        print("OR-Tools Multi-Depot solution found!")
+        
+        # Извлекаем маршруты из решения
+        routes = []
+        assigned_order_ids = set()
+        
+        for vehicle_id in range(len(couriers)):
+            route_orders = []
+            index = routing.Start(vehicle_id)
+            route_distance = 0
+            route_load = 0
+            route_weight = 0
+            
+            # Определяем депо для этого курьера
+            courier = couriers[vehicle_id]
+            courier_depot_id = str(courier.get("depot_id"))
+            
+            while not routing.IsEnd(index):
+                node_index = manager.IndexToNode(index)
+                
+                # Пропускаем депо (они в начале списка локаций)
+                if node_index >= len(depots_data):
+                    # Находим заказ по индексу локации
+                    for order in orders:
+                        order_id = str(order["id"])
+                        if (order_id in order_locations and 
+                            order_locations[order_id] == node_index):
+                            route_orders.append(order)
+                            assigned_order_ids.add(order_id)
+                            route_load += order.get("items_count", 1)
+                            route_weight += order.get("weight", 1.0)
+                            break
+                
+                previous_index = index
+                index = solution.Value(routing.NextVar(index))
+                route_distance += routing.GetArcCostForVehicle(
+                    previous_index, index, vehicle_id
+                )
+            
+            # Создаем маршрут, если есть заказы
+            if route_orders:
+                route = {
+                    "id": str(uuid.uuid4()),
+                    "courier_id": str(courier["id"]),
+                    "depot_id": courier_depot_id,
+                    "total_distance": route_distance / 1000.0,
+                    "total_load": route_load,
+                    "total_weight": route_weight,
+                    "points": []
+                }
+                
+                # Добавляем точки маршрута
+                for j, order in enumerate(route_orders):
+                    route["points"].append({
+                        "order_id": str(order["id"]),
+                        "sequence": j
+                    })
+                
+                routes.append(route)
+                
+                # Диагностика маршрута
+                print(f"  Route {vehicle_id + 1} (Depot {courier_depot_id}): "
+                      f"{len(route_orders)} orders, "
+                      f"{route_load}/{courier.get('max_capacity', 10)} items, "
+                      f"{route_weight:.1f}/{courier.get('max_weight', 50.0)} kg, "
+                      f"{route_distance/1000:.1f}/{courier.get('max_distance', 50.0)} km")
+        
+        # Проверяем неназначенные заказы
+        unassigned_orders = [
+            order for order in orders 
+            if str(order["id"]) not in assigned_order_ids
+        ]
+        
+        print(f"OR-Tools Multi-Depot assigned {len(assigned_order_ids)} of {len(orders)} orders")
+        if unassigned_orders:
+            print(f"Unassigned orders: {len(unassigned_orders)}")
+        
+        return routes
 
 
 # Создаем экземпляр оптимизатора

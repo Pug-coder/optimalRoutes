@@ -748,6 +748,39 @@ class OrderService:
         return True
     
     @staticmethod
+    async def delete_all_orders(db: AsyncSession) -> int:
+        """
+        Удаляет все заказы.
+        
+        Args:
+            db: Сессия базы данных
+            
+        Returns:
+            Количество удаленных заказов
+        """
+        # Получаем все заказы
+        result = await db.execute(select(Order))
+        orders = result.scalars().all()
+        
+        if not orders:
+            return 0
+        
+        # Собираем ID всех местоположений для удаления
+        location_ids = [order.location_id for order in orders if order.location_id]
+        
+        # Удаляем все заказы
+        await db.execute(delete(Order))
+        
+        # Удаляем все связанные местоположения
+        if location_ids:
+            await db.execute(delete(Location).where(Location.id.in_(location_ids)))
+        
+        # Коммитим изменения
+        await db.commit()
+        
+        return len(orders)
+    
+    @staticmethod
     async def _get_depot(db: AsyncSession, depot_id: UUID) -> Optional[Depot]:
         """
         Внутренний метод для получения депо по ID.

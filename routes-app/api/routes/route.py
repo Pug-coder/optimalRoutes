@@ -228,8 +228,15 @@ async def optimize_routes(
                         depots_data, orders_data, couriers_data
                     )
                 )
+            elif params.algorithm == "or_tools":
+                # Используем правильный Multi-Depot OR-Tools
+                optimized_routes = await (
+                    route_optimizer._optimize_with_or_tools_multi_depot(
+                        depots_data, orders_data, couriers_data
+                    )
+                )
             else:
-                # OR-Tools и nearest_neighbor для multi-depot
+                # nearest_neighbor для multi-depot
                 optimized_routes = await (
                     route_optimizer.optimize_routes_multi_depot(
                         depots_data, orders_data, couriers_data, params.algorithm
@@ -280,6 +287,7 @@ async def optimize_routes(
                     depot_id=UUID(route_data["depot_id"]),
                     total_distance=route_data["total_distance"],
                     total_load=route_data["total_load"],
+                    total_weight=route_data.get("total_weight", 0.0),
                     points=points
                 )
                 
@@ -433,6 +441,7 @@ async def optimize_routes_genetic(
                     depot_id=UUID(route_data["depot_id"]),
                     total_distance=route_data["total_distance"],
                     total_load=route_data["total_load"],
+                    total_weight=route_data.get("total_weight", 0.0),
                     points=points
                 )
                 

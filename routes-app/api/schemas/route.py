@@ -48,6 +48,11 @@ class RouteBase(BaseModel):
         description="Total number of items in the route",
         ge=0
     )
+    total_weight: float = Field(
+        0.0,
+        description="Total weight of items in the route in kg",
+        ge=0.0
+    )
     
     @model_validator(mode='before')
     @classmethod
@@ -59,7 +64,11 @@ class RouteBase(BaseModel):
             
             # Проверка нагрузки
             if 'total_load' in data and data['total_load'] < 0:
-                raise ValueError('total load cannot be negative') 
+                raise ValueError('total load cannot be negative')
+            
+            # Проверка веса
+            if 'total_weight' in data and data['total_weight'] < 0:
+                raise ValueError('total weight cannot be negative')
         return data
 
 

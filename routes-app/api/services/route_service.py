@@ -1,13 +1,15 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import delete, update
-from typing import List, Optional, Dict, Any
+from sqlalchemy import delete
+from typing import List, Optional
 from uuid import UUID
 import uuid
 from datetime import datetime
 
 from ..models import Route, RoutePoint, Order, Courier, Depot
-from ..schemas import RouteCreate, RoutePointBase, RouteResponse, RoutePointResponse
+from ..schemas import (
+    RouteCreate, RoutePointBase, RouteResponse, RoutePointResponse
+)
 from ..models.order import OrderStatus
 
 
@@ -37,7 +39,9 @@ class RouteService:
         # Проверяем существование курьера
         courier = await RouteService._get_courier(db, route_data.courier_id)
         if not courier:
-            raise ValueError(f"Courier with ID {route_data.courier_id} not found")
+            raise ValueError(
+                f"Courier with ID {route_data.courier_id} not found"
+            )
         
         # Проверяем существование депо
         depot = await RouteService._get_depot(db, route_data.depot_id)
@@ -51,10 +55,10 @@ class RouteService:
             )
         
         # Проверяем общий вес маршрута
-        if (len(route_data.points) > 0 and 
-            not await RouteService._validate_route_capacity(
-                db, route_data.points, courier.max_capacity
-            )):
+        if (len(route_data.points) > 0 and
+                not await RouteService._validate_route_capacity(
+                    db, route_data.points, courier.max_capacity
+                )):
             raise ValueError(
                 f"Route exceeds courier capacity of {courier.max_capacity}"
             )
@@ -66,6 +70,7 @@ class RouteService:
             depot_id=route_data.depot_id,
             total_distance=route_data.total_distance,
             total_load=route_data.total_load,
+            total_weight=route_data.total_weight,
             created_at=datetime.utcnow()
         )
         
@@ -87,7 +92,8 @@ class RouteService:
             # Проверяем, что заказ в правильном статусе
             if order.status != OrderStatus.PENDING:
                 raise ValueError(
-                    f"Order {order.id} must be in PENDING status to add to route"
+                    f"Order {order.id} must be in PENDING status "
+                    f"to add to route"
                 )
             
             # Создаем точку маршрута
@@ -120,6 +126,7 @@ class RouteService:
             depot_id=route.depot_id,
             total_distance=route.total_distance,
             total_load=route.total_load,
+            total_weight=route.total_weight,
             created_at=route.created_at,
             points=[
                 RoutePointResponse(
@@ -182,6 +189,7 @@ class RouteService:
             depot_id=route.depot_id,
             total_distance=route.total_distance,
             total_load=route.total_load,
+            total_weight=route.total_weight,
             created_at=route.created_at,
             points=point_responses
         )
@@ -231,6 +239,7 @@ class RouteService:
                 depot_id=route.depot_id,
                 total_distance=route.total_distance,
                 total_load=route.total_load,
+                total_weight=route.total_weight,
                 created_at=route.created_at,
                 points=point_responses
             )

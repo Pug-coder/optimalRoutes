@@ -37,6 +37,7 @@ class Route(Base):
     created_at = Column(DateTime, server_default=func.now())
     total_distance = Column(Float, default=0.0)
     total_load = Column(Integer, default=0)
+    total_weight = Column(Float, default=0.0)
     
     # Relationships
     courier = relationship("Courier", back_populates="routes")

@@ -174,6 +174,19 @@ async def delete_order(
         )
 
 
+@router.delete("/", response_model=Dict[str, int])
+async def delete_all_orders(db: AsyncSession = Depends(get_db)):
+    """Удалить все заказы."""
+    try:
+        deleted_count = await OrderService.delete_all_orders(db)
+        return {"deleted_count": deleted_count}
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при удалении всех заказов: {str(e)}"
+        )
+
+
 @router.patch("/{order_id}/status", response_model=OrderResponse)
 async def update_order_status(
     order_id: UUID,
