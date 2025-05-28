@@ -293,16 +293,29 @@ export default {
           const marker = L.marker([depot.location.latitude, depot.location.longitude], {
             icon: L.divIcon({
               className: 'depot-marker',
-              html: `<div class="depot-icon">D</div>`,
-              iconSize: [24, 24]
+              html: `
+                <div class="depot-icon">
+                  <div class="depot-icon-inner">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M19 7h-3V6a4 4 0 0 0-8 0v1H5a1 1 0 0 0-1 1v11a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3V8a1 1 0 0 0-1-1zM10 6a2 2 0 0 1 4 0v1h-4V6zm8 13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V9h2v1a1 1 0 0 0 2 0V9h4v1a1 1 0 0 0 2 0V9h2v10z"/>
+                      <rect x="9" y="12" width="6" height="2" rx="1"/>
+                      <rect x="9" y="15" width="4" height="2" rx="1"/>
+                    </svg>
+                  </div>
+                  <div class="depot-label">${depot.name.substring(0, 40)}</div>
+                </div>
+              `,
+              iconSize: [60, 40],
+              iconAnchor: [30, 40]
             })
           })
           
           const popup = L.popup({
             className: 'depot-popup'
           }).setContent(`
-            <strong>Склад: ${depot.name}</strong><br>
-            Адрес: ${depot.location.address || 'Нет адреса'}
+            <strong>🏢 Склад: ${depot.name}</strong><br>
+            📍 Адрес: ${depot.location.address || 'Нет адреса'}<br>
+            📊 ID: ${depot.id}
           `)
           
           marker.bindPopup(popup)
@@ -321,8 +334,14 @@ export default {
           const marker = L.marker([order.location.latitude, order.location.longitude], {
             icon: L.divIcon({
               className: 'order-marker',
-              html: `<div class="order-icon" style="background-color: ${markerColor}; border-radius: 50%;">O</div>`,
-              iconSize: [24, 24]
+              html: `
+                <div class="order-icon" style="background-color: ${markerColor}; border-radius: 50%;">
+                  <svg width="14" height="14" viewBox="0 0 16.32 26.96" fill="white">
+                    <path d="M8.16 26.96c-0.88 0-1.64-0.4-2.040-1.080l-5.040-9c-0.68-1.16-1.080-2.52-1.080-3.92 0-4.36 3.68-7.92 8.16-7.92 4.52 0 8.16 3.56 8.16 7.92 0 1.4-0.4 2.76-1.12 3.96l-4.96 8.92c-0.44 0.72-1.2 1.12-2.080 1.12zM8.16 6.72c-3.56 0-6.48 2.8-6.48 6.24 0 1.080 0.28 2.16 0.88 3.12l5.040 8.96c0.080 0.16 0.32 0.24 0.6 0.24s0.52-0.12 0.6-0.28l5-8.92c0.56-0.96 0.88-2.040 0.88-3.12-0.040-3.44-2.92-6.24-6.52-6.24zM8.16 16.16c-1.64 0-2.96-1.36-2.96-2.96 0-1.64 1.32-2.96 2.96-2.96s2.96 1.32 2.96 2.96c0 1.6-1.32 2.96-2.96 2.96zM8.16 11.92c-0.72 0-1.28 0.56-1.28 1.28s0.56 1.28 1.28 1.28 1.28-0.56 1.28-1.28-0.56-1.28-1.28-1.28z"/>
+                  </svg>
+                </div>
+              `,
+              iconSize: [18, 20]
             })
           })
           
@@ -423,44 +442,6 @@ export default {
                   console.log(`Segment ${i}:`, segment);
                   segments.push(segment);
                 }
-                
-                // Добавляем маркеры начала и конца маршрута
-                const startCoords = routePoints[0];
-                const endCoords = routePoints[routePoints.length - 1];
-                
-                console.log('Start marker coordinates:', startCoords);
-                console.log('End marker coordinates:', endCoords);
-                
-                const startMarker = L.marker(startCoords, {
-                  icon: L.divIcon({
-                    className: 'start-marker',
-                    html: `<div style="width: 20px; height: 20px; background-color: #4a6cf7; border: 3px solid white; border-radius: 50%;"></div>`,
-                    iconSize: [26, 26]
-                  }),
-                  title: 'Старт',
-                  zIndexOffset: 1000
-                });
-                
-                const endMarker = L.marker(endCoords, {
-                  icon: L.divIcon({
-                    className: 'end-marker',
-                    html: `<div style="width: 20px; height: 20px; background-color: #f74a4a; border: 3px solid white; border-radius: 50%;"></div>`,
-                    iconSize: [26, 26]
-                  }),
-                  title: 'Финиш',
-                  zIndexOffset: 1000
-                });
-                
-                startMarker.bindPopup(L.popup({
-                  className: 'route-start-popup'
-                }).setContent(`<strong>Начало маршрута</strong><br>Склад: ${route.depot_location.address || 'Без адреса'}`));
-                
-                endMarker.bindPopup(L.popup({
-                  className: 'route-end-popup'
-                }).setContent(`<strong>Конец маршрута</strong><br>Склад: ${route.depot_location.address || 'Без адреса'}`));
-                
-                this.routeLines.addLayer(startMarker);
-                this.routeLines.addLayer(endMarker);
                 
                 // Создаем маршрут по дорогам для каждого сегмента
                 let errorSegments = 0;
@@ -818,16 +799,79 @@ export default {
 }
 
 .depot-icon {
-  background-color: #4a6cf7;
+  background: linear-gradient(135deg, #4a6cf7 0%, #6c7bff 50%, #8b9eff 100%);
   color: white;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
+  width: 60px;
+  height: 40px;
+  border-radius: 12px 12px 12px 4px;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   font-weight: bold;
-  border: 2px solid white;
+  border: 3px solid white;
+  box-shadow: 0 4px 12px rgba(74, 108, 247, 0.4), 0 2px 4px rgba(0, 0, 0, 0.1);
+  position: relative;
+  transition: all 0.3s ease;
+  cursor: pointer;
+}
+
+.depot-icon:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(74, 108, 247, 0.5), 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.depot-icon-inner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 2px;
+}
+
+.depot-icon-inner svg {
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.2));
+}
+
+.depot-label {
+  font-size: 8px;
+  font-weight: 600;
+  text-align: center;
+  line-height: 1;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  max-width: 54px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Добавляем пульсирующий эффект для депо */
+.depot-icon::before {
+  content: '';
+  position: absolute;
+  top: -3px;
+  left: -3px;
+  right: -3px;
+  bottom: -3px;
+  background: linear-gradient(135deg, #4a6cf7, #6c7bff);
+  border-radius: 15px 15px 15px 7px;
+  z-index: -1;
+  opacity: 0;
+  animation: depot-pulse 2s infinite;
+}
+
+@keyframes depot-pulse {
+  0% {
+    opacity: 0;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.3;
+    transform: scale(1.1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.2);
+  }
 }
 
 .order-icon {
@@ -855,6 +899,152 @@ export default {
 }
 
 /* Стили для маркеров начала/конца маршрута */
+.route-start-icon {
+  background: linear-gradient(135deg, #28a745 0%, #34ce57 50%, #40e068 100%);
+  color: white;
+  width: 70px;
+  height: 45px;
+  border-radius: 15px 15px 15px 5px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  border: 3px solid white;
+  box-shadow: 0 4px 12px rgba(40, 167, 69, 0.4), 0 2px 4px rgba(0, 0, 0, 0.1);
+  position: relative;
+  transition: all 0.3s ease;
+  cursor: pointer;
+}
+
+.route-start-icon:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(40, 167, 69, 0.5), 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.route-start-icon-inner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 2px;
+}
+
+.route-start-icon-inner svg {
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.2));
+}
+
+.route-start-label {
+  font-size: 9px;
+  font-weight: 700;
+  text-align: center;
+  line-height: 1;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  letter-spacing: 0.5px;
+}
+
+.route-end-icon {
+  background: linear-gradient(135deg, #dc3545 0%, #e74c3c 50%, #f1556c 100%);
+  color: white;
+  width: 70px;
+  height: 45px;
+  border-radius: 15px 15px 15px 5px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  border: 3px solid white;
+  box-shadow: 0 4px 12px rgba(220, 53, 69, 0.4), 0 2px 4px rgba(0, 0, 0, 0.1);
+  position: relative;
+  transition: all 0.3s ease;
+  cursor: pointer;
+}
+
+.route-end-icon:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(220, 53, 69, 0.5), 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.route-end-icon-inner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 2px;
+}
+
+.route-end-icon-inner svg {
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.2));
+}
+
+.route-end-label {
+  font-size: 9px;
+  font-weight: 700;
+  text-align: center;
+  line-height: 1;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  letter-spacing: 0.5px;
+}
+
+/* Пульсирующий эффект для маркеров маршрута */
+.route-start-icon::before {
+  content: '';
+  position: absolute;
+  top: -3px;
+  left: -3px;
+  right: -3px;
+  bottom: -3px;
+  background: linear-gradient(135deg, #28a745, #34ce57);
+  border-radius: 18px 18px 18px 8px;
+  z-index: -1;
+  opacity: 0;
+  animation: route-start-pulse 3s infinite;
+}
+
+.route-end-icon::before {
+  content: '';
+  position: absolute;
+  top: -3px;
+  left: -3px;
+  right: -3px;
+  bottom: -3px;
+  background: linear-gradient(135deg, #dc3545, #e74c3c);
+  border-radius: 18px 18px 18px 8px;
+  z-index: -1;
+  opacity: 0;
+  animation: route-end-pulse 3s infinite 1.5s;
+}
+
+@keyframes route-start-pulse {
+  0% {
+    opacity: 0;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(1.1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.2);
+  }
+}
+
+@keyframes route-end-pulse {
+  0% {
+    opacity: 0;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(1.1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.2);
+  }
+}
+
+/* Старые стили для совместимости */
 .start-marker {
   background-color: #4a6cf7;
   border: 3px solid white;
@@ -914,6 +1104,30 @@ export default {
 
 .depot-marker + .leaflet-popup :deep(.leaflet-popup-tip) {
   background: #4a6cf7 !important;
+  border: none !important;
+}
+
+/* Стили для попапов маркеров начала маршрута */
+.route-start-popup :deep(.leaflet-popup-content-wrapper) {
+  background: linear-gradient(135deg, #28a745 0%, #34ce57 100%) !important;
+  color: white !important;
+  border-radius: 20px !important;
+}
+
+.route-start-popup :deep(.leaflet-popup-tip) {
+  background: #28a745 !important;
+  border: none !important;
+}
+
+/* Стили для попапов маркеров конца маршрута */
+.route-end-popup :deep(.leaflet-popup-content-wrapper) {
+  background: linear-gradient(135deg, #dc3545 0%, #e74c3c 100%) !important;
+  color: white !important;
+  border-radius: 20px !important;
+}
+
+.route-end-popup :deep(.leaflet-popup-tip) {
+  background: #dc3545 !important;
   border: none !important;
 }
 </style> 
