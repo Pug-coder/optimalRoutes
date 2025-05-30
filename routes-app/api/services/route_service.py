@@ -118,8 +118,6 @@ class RouteService:
         # Обновляем маршрут с точками
         await db.refresh(route)
         
-        # В реальной реализации здесь будет сохранение в базу данных
-        # Но для заглушки просто создаем объект ответа
         response = RouteResponse(
             id=route.id,
             courier_id=route.courier_id,

@@ -140,8 +140,8 @@
                   </div>
                   <div class="route-metrics">
                     <span class="metric-badge orders">{{ route.points.length }} из {{ getCourierInfo(route.courier_id).max_capacity }} заказов</span>
-                    <span class="metric-badge distance">{{ route.total_distance.toFixed(2) }} из {{ getCourierInfo(route.courier_id).max_distance }} км</span>
-                    <span class="metric-badge weight">{{ route.total_weight.toFixed(2) }} из {{ getCourierInfo(route.courier_id).max_weight }} кг</span>
+                    <span class="metric-badge distance">{{ route.total_distance.toFixed(2) }} из {{ getCourierInfo(route.courier_id).max_distance.toFixed(2) }} км</span>
+                    <span class="metric-badge weight">{{ route.total_weight.toFixed(2) }} из {{ getCourierInfo(route.courier_id).max_weight.toFixed(2) }} кг</span>
                   </div>
                 </div>
               </div>

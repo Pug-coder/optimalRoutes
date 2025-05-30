@@ -70,7 +70,8 @@ class GeneticOptimizer:
         self.order_indices = {}
         
         # OSRM configuration
-        self.use_real_roads: bool = True  # Включаем OSRM для реальных расстояний
+        # Включаем OSRM для реальных расстояний
+        self.use_real_roads: bool = True  
         self.osrm_api_url: str = (
             "https://router.project-osrm.org/table/v1/driving/"
         )
@@ -311,7 +312,8 @@ class GeneticOptimizer:
         self.depot_indices = []
         depot_id_to_index = {}
         
-        print(f"Initializing data with {len(self.depots)} depots, {len(self.couriers)} couriers, {len(self.orders)} orders")
+        print(f"Initializing data with {len(self.depots)} depots, "
+              f"{len(self.couriers)} couriers, {len(self.orders)} orders")
         
         # Add depot locations first
         for i, (depot_id, depot_data) in enumerate(self.depots.items()):
@@ -320,7 +322,8 @@ class GeneticOptimizer:
                 depot_data.get("location", {})
             )
             if depot_location:
-                print(f"Added depot location: {depot_location.latitude}, {depot_location.longitude}")
+                print(f"Added depot location: {depot_location.latitude}, "
+                      f"{depot_location.longitude}")
                 self.locations.append(depot_location)
                 self.depot_indices.append(i)
                 depot_id_to_index[depot_id] = i
@@ -330,7 +333,8 @@ class GeneticOptimizer:
         # Add order locations
         self.order_indices = {}
         for order_id, order_data in self.orders.items():
-            print(f"Processing order {order_id}: status={order_data.get('status')}")
+            print(f"Processing order {order_id}: "
+                  f"status={order_data.get('status')}")
             # Принимаем заказы со статусом "pending" или без статуса (None)
             status = order_data.get("status")
             if status == "pending" or status is None:
@@ -341,11 +345,13 @@ class GeneticOptimizer:
                     idx = len(self.locations)
                     self.locations.append(order_location)
                     self.order_indices[order_id] = idx
-                    print(f"Added order location: {order_location.latitude}, {order_location.longitude}")
+                    print(f"Added order location: {order_location.latitude}, "
+                          f"{order_location.longitude}")
                 else:
                     print(f"Failed to create order location for {order_id}")
         
-        print(f"Total locations: {len(self.locations)}, order indices: {len(self.order_indices)}")
+        print(f"Total locations: {len(self.locations)}, "
+              f"order indices: {len(self.order_indices)}")
         
         # Mapping couriers to their depots
         self.courier_depot_indices = []
@@ -356,7 +362,8 @@ class GeneticOptimizer:
         
         # Compute distance matrix
         if self.locations:
-            print(f"Computing distance matrix for {len(self.locations)} locations")
+            print(f"Computing distance matrix for {len(self.locations)} "
+                  f"locations")
             self.distance_matrix = self._compute_distance_matrix(
                 self.locations
             )
@@ -408,7 +415,10 @@ class GeneticOptimizer:
         # Сначала распределяем заказы между депо
         orders_by_depot = self._assign_orders_to_depots()
         
-        print("Orders distribution by depot:")
+        # Балансируем нагрузку между депо
+        orders_by_depot = self._balance_depot_workload(orders_by_depot)
+        
+        print("Final orders distribution by depot:")
         for depot_id, order_ids in orders_by_depot.items():
             depot_name = self.depots[depot_id].get("name", depot_id)
             print(f"  {depot_name}: {len(order_ids)} orders")
@@ -468,7 +478,8 @@ class GeneticOptimizer:
                     order_load = order_data.get("items_count", 1)
                     order_weight = order_data.get("weight", 1.0)
                     
-                    # Check if adding this order exceeds capacity (items and weight)
+                    # Check if adding this order exceeds capacity
+                    # (both items and weight)
                     max_weight = courier_data.get("max_weight", 50.0)
                     current_weight = sum(
                         self.orders[point["order_id"]].get("weight", 1.0)
@@ -495,7 +506,9 @@ class GeneticOptimizer:
                         self._update_route_metrics(temp_route)
                         
                         # Check distance constraint
-                        max_distance = courier_data.get("max_distance", float('inf'))
+                        max_distance = courier_data.get(
+                            "max_distance", float('inf')
+                        )
                         
                         if temp_route["total_distance"] <= max_distance:
                             # Add to route
@@ -550,7 +563,8 @@ class GeneticOptimizer:
                         order_load = order_data.get("items_count", 1)
                         order_weight = order_data.get("weight", 1.0)
                         
-                        # Check if adding this order exceeds capacity (items and weight)
+                        # Check if adding this order exceeds capacity
+                        # (both items and weight)
                         max_weight = courier_data.get("max_weight", 50.0)
                         current_weight = sum(
                             self.orders[point["order_id"]].get("weight", 1.0)
@@ -577,7 +591,9 @@ class GeneticOptimizer:
                             self._update_route_metrics(temp_route)
                             
                             # Check distance constraint
-                            max_distance = courier_data.get("max_distance", float('inf'))
+                            max_distance = courier_data.get(
+                                "max_distance", float('inf')
+                            )
                             
                             if temp_route["total_distance"] <= max_distance:
                                 # Add to route
@@ -645,7 +661,8 @@ class GeneticOptimizer:
                 order_load = order_data.get("items_count", 1)
                 order_weight = order_data.get("weight", 1.0)
                 
-                # Check if adding this order exceeds capacity (items and weight)
+                # Check if adding this order exceeds capacity
+                # (both items and weight)
                 max_weight = courier_data.get("max_weight", 50.0)
                 current_weight = sum(
                     self.orders[point["order_id"]].get("weight", 1.0)
@@ -672,7 +689,9 @@ class GeneticOptimizer:
                     self._update_route_metrics(temp_route)
                     
                     # Check distance constraint
-                    max_distance = courier_data.get("max_distance", float('inf'))
+                    max_distance = courier_data.get(
+                        "max_distance", float('inf')
+                    )
                     
                     if temp_route["total_distance"] <= max_distance:
                         # Add to route
@@ -751,7 +770,8 @@ class GeneticOptimizer:
                     order_load = order_data.get("items_count", 1)
                     order_weight = order_data.get("weight", 1.0)
                     
-                    # Check if adding this order exceeds capacity (items and weight)
+                    # Check if adding this order exceeds capacity
+                    # (both items and weight)
                     max_weight = courier_data.get("max_weight", 50.0)
                     current_weight = sum(
                         self.orders[point["order_id"]].get("weight", 1.0)
@@ -778,7 +798,9 @@ class GeneticOptimizer:
                         self._update_route_metrics(temp_route)
                         
                         # Check distance constraint
-                        max_distance = courier_data.get("max_distance", float('inf'))
+                        max_distance = courier_data.get(
+                            "max_distance", float('inf')
+                        )
                         
                         if temp_route["total_distance"] <= max_distance:
                             # Add to route
@@ -1304,7 +1326,9 @@ class GeneticOptimizer:
 
     def _assign_orders_to_depots(self) -> Dict[str, List[str]]:
         """
-        Распределяет заказы между депо на основе минимального расстояния.
+        Распределяет заказы между депо.
+        Сначала проверяет существующие назначения depot_id,
+        затем назначает оставшиеся заказы по минимальному расстоянию.
         
         Returns:
             Словарь depot_id -> список order_ids
@@ -1315,22 +1339,147 @@ class GeneticOptimizer:
         for depot_id in self.depots.keys():
             orders_by_depot[depot_id] = []
         
-        # Для каждого заказа находим ближайшее депо
+        # Создаем отображение depot_id -> depot_index
+        depot_id_to_index = {}
+        for i, depot_id in enumerate(self.depots.keys()):
+            depot_id_to_index[depot_id] = i
+        
+        unassigned_orders = []
+        
+        # Сначала обрабатываем заказы с уже назначенным depot_id
         for order_id in self.order_indices.keys():
-            order_idx = self.order_indices[order_id]
+            order_data = self.orders[order_id]
+            assigned_depot_id = order_data.get("depot_id")
             
-            min_distance = float('inf')
-            best_depot_id = list(self.depots.keys())[0]  # По умолчанию первое депо
+            if assigned_depot_id and str(assigned_depot_id) in self.depots:
+                # Заказ уже назначен на существующее депо
+                depot_id_str = str(assigned_depot_id)
+                orders_by_depot[depot_id_str].append(order_id)
+                print(f"Order {order_id} already assigned to depot {depot_id_str}")
+            else:
+                # Заказ не назначен или назначен на несуществующее депо
+                unassigned_orders.append(order_id)
+        
+        # Назначаем оставшиеся заказы по минимальному расстоянию
+        if unassigned_orders:
+            print(f"Assigning {len(unassigned_orders)} orders by distance")
             
-            # Проверяем расстояние до каждого депо
-            for i, depot_id in enumerate(self.depots.keys()):
-                depot_idx = i  # Депо идут первыми в списке локаций
-                distance = self.distance_matrix[depot_idx][order_idx]
+            for order_id in unassigned_orders:
+                order_idx = self.order_indices[order_id]
                 
-                if distance < min_distance:
-                    min_distance = distance
-                    best_depot_id = depot_id
+                min_distance = float('inf')
+                best_depot_id = list(self.depots.keys())[0]
+                
+                # Проверяем расстояние до каждого депо
+                for depot_id in self.depots.keys():
+                    depot_idx = depot_id_to_index[depot_id]
+                    distance = self.distance_matrix[depot_idx][order_idx]
+                    
+                    if distance < min_distance:
+                        min_distance = distance
+                        best_depot_id = depot_id
+                
+                orders_by_depot[best_depot_id].append(order_id)
+                print(f"Order {order_id} assigned to closest depot {best_depot_id} "
+                      f"(distance: {min_distance:.2f})")
+        
+        return orders_by_depot
+
+    def _balance_depot_workload(self, orders_by_depot: Dict[str, List[str]]) -> Dict[str, List[str]]:
+        """
+        Балансирует нагрузку между депо, перераспределяя заказы
+        от перегруженных депо к недогруженным.
+        
+        Args:
+            orders_by_depot: Текущее распределение заказов по депо
             
-            orders_by_depot[best_depot_id].append(order_id)
+        Returns:
+            Оптимизированное распределение заказов
+        """
+        # Группируем курьеров по депо
+        couriers_by_depot = {}
+        for courier_id, courier_data in self.couriers.items():
+            depot_id = str(courier_data.get("depot_id"))
+            if depot_id not in couriers_by_depot:
+                couriers_by_depot[depot_id] = []
+            couriers_by_depot[depot_id].append(courier_id)
+        
+        # Вычисляем емкость каждого депо
+        depot_capacity = {}
+        for depot_id in self.depots.keys():
+            depot_couriers = couriers_by_depot.get(depot_id, [])
+            total_capacity = sum(
+                self.couriers[courier_id].get("max_capacity", 10)
+                for courier_id in depot_couriers
+            )
+            depot_capacity[depot_id] = total_capacity
+        
+        print("Depot capacity analysis:")
+        for depot_id in self.depots.keys():
+            depot_name = self.depots[depot_id].get("name", depot_id)
+            capacity = depot_capacity[depot_id]
+            current_orders = len(orders_by_depot[depot_id])
+            print(f"  {depot_name}: {current_orders} orders, capacity {capacity}")
+        
+        # Находим депо с избытком и недостатком заказов
+        overloaded_depots = []
+        underloaded_depots = []
+        
+        for depot_id in self.depots.keys():
+            capacity = depot_capacity[depot_id]
+            current_orders = len(orders_by_depot[depot_id])
+            
+            if capacity > 0:  # Только депо с курьерами
+                if current_orders > capacity:
+                    overloaded_depots.append((depot_id, current_orders - capacity))
+                elif current_orders < capacity:
+                    underloaded_depots.append((depot_id, capacity - current_orders))
+        
+        # Перераспределяем заказы
+        if overloaded_depots and underloaded_depots:
+            print("Rebalancing orders between depots...")
+            
+            for overloaded_depot_id, excess in overloaded_depots:
+                depot_orders = orders_by_depot[overloaded_depot_id]
+                orders_to_move = []
+                
+                # Выбираем заказы для перемещения (начиная с конца списка)
+                for _ in range(min(excess, len(depot_orders))):
+                    if depot_orders:
+                        orders_to_move.append(depot_orders.pop())
+                
+                # Перемещаем заказы в недогруженные депо
+                for order_id in orders_to_move:
+                    if not underloaded_depots:
+                        break
+                        
+                    # Находим ближайшее недогруженное депо
+                    order_idx = self.order_indices[order_id]
+                    best_depot = None
+                    min_distance = float('inf')
+                    
+                    for target_depot_id, available_capacity in underloaded_depots:
+                        if available_capacity > 0:
+                            depot_idx = list(self.depots.keys()).index(target_depot_id)
+                            distance = self.distance_matrix[depot_idx][order_idx]
+                            
+                            if distance < min_distance:
+                                min_distance = distance
+                                best_depot = (target_depot_id, available_capacity)
+                    
+                    if best_depot:
+                        target_depot_id, available_capacity = best_depot
+                        orders_by_depot[target_depot_id].append(order_id)
+                        
+                        # Обновляем доступную емкость
+                        for i, (depot_id, capacity) in enumerate(underloaded_depots):
+                            if depot_id == target_depot_id:
+                                underloaded_depots[i] = (depot_id, capacity - 1)
+                                if capacity - 1 <= 0:
+                                    underloaded_depots.pop(i)
+                                break
+                        
+                        print(f"Moved order {order_id} from {overloaded_depot_id} "
+                              f"to {target_depot_id}")
         
         return orders_by_depot 

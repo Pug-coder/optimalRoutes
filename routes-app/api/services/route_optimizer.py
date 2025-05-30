@@ -1486,7 +1486,7 @@ class RouteOptimizer:
         search_parameters.local_search_metaheuristic = (
             routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
         )
-        search_parameters.time_limit.seconds = 60  # Больше времени для Multi-Depot
+        search_parameters.time_limit.seconds = 420  # Больше времени для Multi-Depot
         
         # Диагностика
         print(f"OR-Tools Multi-Depot CVRP setup:")

@@ -734,15 +734,25 @@ class OrderService:
                 f"Cannot delete order in status {order.status}. Only PENDING and CANCELLED orders can be deleted."
             )
         
+        # Сохраняем ID местоположения для проверки
         location_id = order.location_id
         
-        # Удаляем заказ
+        # СНАЧАЛА удаляем заказ (чтобы убрать FK constraint)
         await db.execute(delete(Order).where(Order.id == order_id))
         
-        # Удаляем связанное местоположение
-        await db.execute(delete(Location).where(Location.id == location_id))
+        # Коммитим удаление заказа
+        await db.commit()
         
-        # Коммитим изменения
+        # Проверяем, есть ли еще заказы с этой локацией
+        if location_id:
+            remaining_orders = await db.execute(
+                select(func.count(Order.id)).where(Order.location_id == location_id)
+            )
+            count = remaining_orders.scalar()
+        
+            # Удаляем локацию только если больше нет заказов с ней
+            if count == 0:
+                await db.execute(delete(Location).where(Location.id == location_id))
         await db.commit()
         
         return True
