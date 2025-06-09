@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from typing import List, Dict
 from uuid import UUID
 
-from ..services import DepotService, route_optimizer
+from ..services import DepotService
 from ..schemas import (
     DepotCreate, DepotCreateWithAddress, DepotResponse
 )
@@ -92,14 +92,36 @@ async def delete_depot(
 ):
     """Удалить депо по ID."""
     try:
+        print(f"Attempting to delete depot with ID: {depot_id} "
+              f"(type: {type(depot_id)})")
+        
+        # First check if depot exists by getting it
+        depot = await DepotService.get_depot(db, depot_id)
+        if depot:
+            print(f"Found depot: {depot.name} with ID {depot.id}")
+        else:
+            print(f"Depot with ID {depot_id} not found in get_depot")
+            
         success = await DepotService.delete_depot(db, depot_id)
+        print(f"Depot deletion result: {success}")
         return {"success": success}
     except ValueError as e:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Ошибка: {str(e)}"
-        )
+        print(f"ValueError during depot deletion: {str(e)}")
+        error_message = str(e)
+        if "not found" in error_message:
+            # Depot doesn't exist
+            raise HTTPException(
+                status_code=404,
+                detail=f"Ошибка: {error_message}"
+            )
+        else:
+            # Business logic error (depot has related entities)
+            raise HTTPException(
+                status_code=409,
+                detail=f"Ошибка: {error_message}"
+            )
     except Exception as e:
+        print(f"Unexpected error during depot deletion: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail=f"Ошибка при удалении депо: {str(e)}"
