@@ -8,8 +8,44 @@ import uuid
 import numpy as np
 import requests
 import time
+import logging
+import os
 
 from ..models import Location
+
+def get_osrm_logger(algorithm_name: str) -> logging.Logger:
+    """
+    Создает логгер для OSRM API с именем файла в зависимости от алгоритма.
+    
+    Args:
+        algorithm_name: Название алгоритма
+        
+    Returns:
+        Настроенный логгер
+    """
+    # Создаем директорию logs, если её нет
+    os.makedirs('logs', exist_ok=True)
+    
+    logger_name = f'osrm_api_{algorithm_name}'
+    logger = logging.getLogger(logger_name)
+    
+    # Проверяем, не настроен ли уже этот логгер
+    if not logger.handlers:
+        logger.setLevel(logging.INFO)
+        
+        # Создаем handler для записи в файл
+        filename = f'logs/osrm_{algorithm_name}.log'
+        handler = logging.FileHandler(filename)
+        handler.setLevel(logging.INFO)
+        
+        # Создаем formatter
+        formatter = logging.Formatter('%(asctime)s - %(message)s')
+        handler.setFormatter(formatter)
+        
+        # Добавляем handler к логгеру
+        logger.addHandler(handler)
+    
+    return logger
 
 try:
     from ortools.constraint_solver import routing_enums_pb2
@@ -27,6 +63,7 @@ class RouteOptimizer:
         """Инициализация оптимизатора маршрутов."""
         self.use_real_roads = True  # Включаем OSRM для реальных расстояний
         self.osrm_api_url = "https://router.project-osrm.org/table/v1/driving/"
+        self.current_algorithm = "nearest_neighbor"  # Текущий алгоритм для логирования
     
     async def optimize_routes(
         self, 
@@ -50,6 +87,9 @@ class RouteOptimizer:
         """
         if not orders or not couriers or not depot_data:
             return []
+        
+        # Устанавливаем текущий алгоритм для логирования
+        self.current_algorithm = algorithm
         
         # Выбираем алгоритм оптимизации
         if algorithm == "or_tools" and OR_TOOLS_AVAILABLE:
@@ -703,7 +743,13 @@ class RouteOptimizer:
                f"sources={source_indices}&destinations={dest_indices}")
         
         # Делаем запрос
-        response = requests.get(url)
+        start_time = time.time()
+        response = requests.get(url, timeout=30)
+        end_time = time.time()
+        
+        # Логируем время запроса
+        osrm_logger = get_osrm_logger(self.current_algorithm)
+        osrm_logger.info(f"OSRM API request time: {end_time - start_time:.3f} seconds")
         
         if response.status_code != 200:
             raise Exception(
@@ -788,7 +834,13 @@ class RouteOptimizer:
         
         try:
             # Делаем запрос с таймаутом
+            start_time = time.time()
             response = requests.get(url, timeout=30)
+            end_time = time.time()
+            
+            # Логируем время запроса
+            osrm_logger = get_osrm_logger(self.current_algorithm)
+            osrm_logger.info(f"OSRM API request time: {end_time - start_time:.3f} seconds")
             
             print(f"OSRM response status: {response.status_code}")
             
@@ -917,7 +969,8 @@ class RouteOptimizer:
         depot_data: Dict[str, Any],
         orders: List[Dict[str, Any]], 
         couriers: List[Dict[str, Any]],
-        params: Optional[Dict[str, Any]] = None
+        params: Optional[Dict[str, Any]] = None,
+        specific_orders: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
         """
         Выполняет оптимизацию маршрутов с использованием
@@ -928,6 +981,7 @@ class RouteOptimizer:
             orders: Список заказов для оптимизации
             couriers: Список доступных курьеров
             params: Параметры генетического алгоритма
+            specific_orders: Список ID заказов для оптимизации (опционально)
             
         Returns:
             Список оптимизированных маршрутов
@@ -936,6 +990,8 @@ class RouteOptimizer:
         print(f"Depot: {depot_data.get('id') if depot_data else 'None'}")
         print(f"Orders: {len(orders) if orders else 0}")
         print(f"Couriers: {len(couriers) if couriers else 0}")
+        if specific_orders:
+            print(f"Specific orders to optimize: {len(specific_orders)}")
         
         if not orders or not couriers or not depot_data:
             print("Missing data, returning empty list")
@@ -949,7 +1005,7 @@ class RouteOptimizer:
         generations = params.get("generations", 50) if params else 50
         mutation_rate = params.get("mutation_rate", 0.1) if params else 0.1
         elite_size = params.get("elite_size", 10) if params else 10
-        timeout_seconds = params.get("timeout_seconds", 3600) if params else 3600  # Увеличиваем до 1 часа
+        timeout_seconds = params.get("timeout_seconds", 3600) if params else 3600
         
         print(f"Genetic algorithm with params: pop={population_size}, "
               f"gen={generations}, mut={mutation_rate}, elite={elite_size}")
@@ -975,7 +1031,10 @@ class RouteOptimizer:
         # Запускаем оптимизацию
         try:
             print(f"Starting genetic optimization with {len(orders)} orders, {len(couriers)} couriers")
-            optimized_routes = genetic_optimizer.optimize_routes()
+            if specific_orders:
+                optimized_routes = genetic_optimizer.optimize_routes(specific_orders)
+            else:
+                optimized_routes = genetic_optimizer.optimize_routes()
             print(f"Genetic optimization completed, got {len(optimized_routes)} routes")
             
             # Очищаем оптимизатор
@@ -993,6 +1052,82 @@ class RouteOptimizer:
             return await self._optimize_with_nearest_neighbor(
                 depot_data, orders, couriers
             )
+
+    async def optimize_remaining_orders_genetic(
+        self,
+        depots_data: List[Dict[str, Any]],
+        orders: List[Dict[str, Any]], 
+        couriers: List[Dict[str, Any]],
+        existing_routes: List[Dict[str, Any]],
+        params: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Оптимизирует маршруты для нераспределенных заказов используя генетический алгоритм.
+        
+        Args:
+            depots_data: Список данных о депо
+            orders: Полный список заказов
+            couriers: Список доступных курьеров
+            existing_routes: Существующие маршруты
+            params: Параметры генетического алгоритма
+            
+        Returns:
+            Список новых маршрутов для нераспределенных заказов
+        """
+        print("=== OPTIMIZING REMAINING ORDERS WITH GENETIC ALGORITHM ===")
+        
+        if not orders or not couriers or not depots_data:
+            return []
+        
+        # Импортируем генетический оптимизатор
+        from .genetic_optimizer import GeneticOptimizer
+        
+        # Создаем экземпляр генетического оптимизатора
+        genetic_optimizer = GeneticOptimizer(
+            population_size=params.get("population_size", 50) if params else 50,
+            max_generations=params.get("generations", 50) if params else 50,
+            mutation_rate=params.get("mutation_rate", 0.1) if params else 0.1,
+            elitism_rate=(params.get("elite_size", 10) if params else 10) / 50,
+            timeout_seconds=params.get("timeout_seconds", 3600) if params else 3600
+        )
+        
+        # Добавляем все данные в оптимизатор
+        for depot_data in depots_data:
+            genetic_optimizer.add_depot(depot_data)
+        
+        for courier in couriers:
+            genetic_optimizer.add_courier(courier)
+            
+        for order in orders:
+            genetic_optimizer.add_order(order)
+        
+        try:
+            # Получаем нераспределенные заказы
+            unassigned_orders = genetic_optimizer.get_unassigned_orders(existing_routes)
+            
+            if not unassigned_orders:
+                print("No unassigned orders found")
+                genetic_optimizer.reset()
+                return []
+            
+            print(f"Found {len(unassigned_orders)} unassigned orders")
+            
+            # Оптимизируем только нераспределенные заказы
+            new_routes = genetic_optimizer.optimize_remaining_orders(existing_routes)
+            
+            print(f"Generated {len(new_routes)} new routes for remaining orders")
+            
+            # Очищаем оптимизатор
+            genetic_optimizer.reset()
+            
+            return new_routes
+            
+        except Exception as e:
+            print(f"Error in remaining orders optimization: {e}")
+            import traceback
+            traceback.print_exc()
+            genetic_optimizer.reset()
+            return []
 
     async def optimize_routes_multi_depot(
         self,
@@ -1311,6 +1446,9 @@ class RouteOptimizer:
         Оптимизация маршрутов для Multi-Depot VRP с использованием OR-Tools.
         Реализация согласно официальной документации Google OR-Tools.
         """
+        # Устанавливаем текущий алгоритм для логирования OSRM
+        self.current_algorithm = "or_tools"
+        
         if not OR_TOOLS_AVAILABLE:
             print("OR-Tools not available, falling back to multi-depot nearest neighbor")
             return await self.optimize_routes_multi_depot(

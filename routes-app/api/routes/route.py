@@ -10,7 +10,7 @@ from ..services import RouteService, route_optimizer
 from ..services import DepotService, CourierService, OrderService
 from ..schemas import (
     RouteCreate, RouteResponse, RouteWithLocationsResponse, 
-    OptimizationResponse
+    OptimizationResponse, RoutePointBase
 )
 from core.database import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -494,4 +494,206 @@ async def reset_routes(db: AsyncSession = Depends(get_db)):
         raise HTTPException(
             status_code=500,
             detail=f"Ошибка при сбросе маршрутов: {str(e)}"
+        )
+
+
+@router.post("/optimize/genetic/remaining", response_model=OptimizationResponse)
+async def optimize_remaining_orders_genetic(
+    params: GeneticParams = GeneticParams(),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Оптимизирует нераспределенные заказы с помощью генетического алгоритма.
+    
+    Этот endpoint позволяет запустить повторную оптимизацию для заказов,
+    которые не были назначены курьерам при предыдущей оптимизации.
+    Все курьеры считаются свободными (вернулись в депо).
+    """
+    try:
+        start_time = time.time()
+        
+        # Получаем все склады
+        if params.depot_id:
+            depot = await DepotService.get_depot(db, params.depot_id)
+            if not depot:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Склад с ID {params.depot_id} не найден"
+                )
+            depots = [depot]
+        else:
+            depots = await DepotService.get_all_depots(db)
+            if not depots:
+                raise ValueError("Нет доступных складов для оптимизации")
+        
+        # Получаем всех курьеров
+        all_couriers = []
+        for depot in depots:
+            depot_couriers = await CourierService.get_couriers_by_depot(
+                db, depot.id
+            )
+            all_couriers.extend(depot_couriers)
+        
+        if not all_couriers:
+            raise ValueError("Нет доступных курьеров для оптимизации")
+        
+        # Получаем все заказы со статусом "pending"
+        all_orders = await OrderService.get_pending_orders(db)
+        if not all_orders:
+            raise ValueError("Нет свободных заказов для оптимизации")
+        
+        # Получаем существующие маршруты
+        existing_routes = await RouteService.get_all_routes(db)
+        
+        print(f"Starting remaining orders optimization:")
+        print(f"  Depots: {len(depots)}")
+        print(f"  Couriers: {len(all_couriers)}")
+        print(f"  All pending orders: {len(all_orders)}")
+        print(f"  Existing routes: {len(existing_routes)}")
+        
+        # Преобразуем в формат для оптимизатора
+        depots_data = []
+        for depot in depots:
+            depot_dict = {
+                "id": depot.id,
+                "name": depot.name,
+                "location": {
+                    "latitude": depot.location.latitude,
+                    "longitude": depot.location.longitude,
+                    "address": depot.location.address
+                }
+            }
+            depots_data.append(depot_dict)
+        
+        couriers_data = []
+        for courier in all_couriers:
+            courier_dict = {
+                "id": courier.id,
+                "name": courier.name,
+                "depot_id": courier.depot_id,
+                "max_capacity": courier.max_capacity,
+                "max_weight": courier.max_weight,
+                "max_distance": courier.max_distance
+            }
+            couriers_data.append(courier_dict)
+        
+        orders_data = []
+        for order in all_orders:
+            order_dict = {
+                "id": order.id,
+                "customer_name": order.customer_name,
+                "items_count": order.items_count,
+                "weight": order.weight,
+                "status": order.status,
+                "location": {
+                    "latitude": order.location.latitude,
+                    "longitude": order.location.longitude,
+                    "address": order.location.address
+                }
+            }
+            orders_data.append(order_dict)
+        
+        # Преобразуем существующие маршруты в нужный формат
+        existing_routes_data = []
+        for route in existing_routes:
+            route_dict = {
+                "id": str(route.id),
+                "courier_id": str(route.courier_id),
+                "depot_id": str(route.depot_id),
+                "points": []
+            }
+            for point in route.points:
+                route_dict["points"].append({
+                    "order_id": str(point.order_id),
+                    "sequence": point.sequence
+                })
+            existing_routes_data.append(route_dict)
+        
+        # Параметры генетического алгоритма
+        genetic_params = {
+            "population_size": params.population_size,
+            "generations": params.generations,
+            "mutation_rate": params.mutation_rate,
+            "elite_size": params.elite_size
+        }
+        
+        # Запускаем оптимизацию нераспределенных заказов
+        optimized_routes = await route_optimizer.optimize_remaining_orders_genetic(
+            depots_data, orders_data, couriers_data, existing_routes_data, genetic_params
+        )
+        
+        print(f"Optimization completed. Generated {len(optimized_routes)} new routes")
+        
+        # Сохраняем новые маршруты в базу данных
+        saved_routes = []
+        assigned_order_ids = []
+        
+        for route_data in optimized_routes:
+            # Создаем данные для создания маршрута
+            route_create_data = RouteCreate(
+                courier_id=UUID(route_data["courier_id"]),
+                depot_id=UUID(route_data["depot_id"]),
+                total_distance=route_data.get("total_distance", 0.0),
+                total_load=route_data.get("total_load", 0),
+                total_weight=route_data.get("total_weight", 0.0),
+                points=[
+                    RoutePointBase(
+                        order_id=UUID(point["order_id"]),
+                        sequence=point["sequence"]
+                    )
+                    for point in route_data["points"]
+                ]
+            )
+            
+            # Создаем маршрут (автоматически обновит статусы заказов)
+            saved_route = await RouteService.create_route(
+                db, route_create_data
+            )
+            saved_routes.append(saved_route)
+            
+            # Собираем ID назначенных заказов для статистики
+            for point in route_data["points"]:
+                assigned_order_ids.append(UUID(point["order_id"]))
+        
+        execution_time = time.time() - start_time
+        
+        # Подсчитываем статистику
+        total_distance = sum(route.total_distance for route in saved_routes)
+        total_orders_assigned = len(assigned_order_ids)
+        
+        # Получаем общую статистику по всем маршрутам в системе
+        all_current_routes = await RouteService.get_all_routes(db)
+        total_system_distance = sum(route.total_distance for route in all_current_routes)
+        total_system_assigned = len(all_orders) - len([order for order in all_orders if order.status == 'pending'])
+        
+        print(f"Remaining orders optimization completed:")
+        print(f"  New routes created: {len(saved_routes)}")
+        print(f"  Additional orders assigned: {total_orders_assigned}")
+        print(f"  Total distance of new routes: {total_distance:.2f} km")
+        print(f"  Execution time: {execution_time:.2f} seconds")
+        
+        return OptimizationResponse(
+            algorithm="genetic (remaining orders)",
+            total_routes=len(saved_routes),  # Только новые маршруты
+            total_distance=total_distance,   # Только расстояние новых маршрутов
+            assigned_orders=total_orders_assigned,  # Только новые назначенные заказы
+            total_orders=len(all_orders),
+            available_couriers=len(all_couriers),
+            available_depots=len(depots),
+            execution_time=execution_time,
+            routes=saved_routes  # Только новые маршруты
+        )
+        
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=str(e)
+        )
+    except Exception as e:
+        print(f"Error in remaining orders optimization: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при оптимизации нераспределенных заказов: {str(e)}"
         ) 

@@ -56,7 +56,12 @@
           
           <div class="form-group form-check">
             <input type="checkbox" id="reset-previous" v-model="settings.resetPrevious">
-            <label for="reset-previous">Сбросить предыдущие маршруты</label>
+            <label for="reset-previous">
+              Сбросить предыдущие маршруты
+              <span v-if="settings.algorithm === 'genetic'" class="checkbox-help">
+                (если выключено - дооптимизировать только нераспределенные заказы)
+              </span>
+            </label>
           </div>
           
           <div class="stats-box">
@@ -120,6 +125,15 @@
             <div class="summary-item">
               <span class="label">Время выполнения:</span>
               <span class="value">{{ lastResult.execution_time.toFixed(2) }} с</span>
+            </div>
+          </div>
+          
+          <!-- Информация о дооптимизации -->
+          <div v-if="lastResult.algorithm.includes('дооптимизация')" class="additional-info">
+            <div class="info-icon">ℹ️</div>
+            <div class="info-content">
+              <strong>Результат включает дооптимизацию</strong>
+              <p>Показаны результаты базовой оптимизации и дополнительной оптимизации нераспределенных заказов.</p>
             </div>
           </div>
           
@@ -316,13 +330,24 @@ export default {
         let response;
         
         if (this.settings.algorithm === 'genetic') {
-          // For genetic algorithm, use separate endpoint with body parameters
-          response = await axios.post(`${API_BASE_URL}/routes/optimize/genetic`, {
-            population_size: this.settings.genetic.population_size,
-            generations: this.settings.genetic.generations,
-            mutation_rate: this.settings.genetic.mutation_rate,
-            elite_size: this.settings.genetic.elite_size
-          });
+          // For genetic algorithm, check if we should optimize remaining orders only
+          if (!this.settings.resetPrevious && this.stats.unassignedCount > 0) {
+            // Use remaining orders endpoint
+            response = await axios.post(`${API_BASE_URL}/routes/optimize/genetic/remaining`, {
+              population_size: this.settings.genetic.population_size,
+              generations: this.settings.genetic.generations,
+              mutation_rate: this.settings.genetic.mutation_rate,
+              elite_size: this.settings.genetic.elite_size
+            });
+          } else {
+            // Use regular genetic endpoint
+            response = await axios.post(`${API_BASE_URL}/routes/optimize/genetic`, {
+              population_size: this.settings.genetic.population_size,
+              generations: this.settings.genetic.generations,
+              mutation_rate: this.settings.genetic.mutation_rate,
+              elite_size: this.settings.genetic.elite_size
+            });
+          }
         } else {
           // For other algorithms, use main endpoint with JSON body parameters
           response = await axios.post(`${API_BASE_URL}/routes/optimize`, {
@@ -331,7 +356,7 @@ export default {
         }
         
         // API now returns OptimizationResponse with algorithm info
-        this.lastResult = {
+        const newResult = {
           algorithm: response.data.algorithm,
           routes: response.data.routes,
           assigned_orders: response.data.assigned_orders,
@@ -339,6 +364,32 @@ export default {
           total_distance: response.data.total_distance,
           execution_time: response.data.execution_time
         };
+        
+        // Check if this is a remaining orders optimization (genetic + no reset + existing results)
+        const isRemainingOptimization = (
+          this.settings.algorithm === 'genetic' && 
+          !this.settings.resetPrevious && 
+          this.lastResult && 
+          this.stats.unassignedCount > 0
+        );
+        
+        if (isRemainingOptimization) {
+          // Merge with existing results
+          this.lastResult = {
+            algorithm: `${this.lastResult.algorithm} + дооптимизация`,
+            routes: [...this.lastResult.routes, ...newResult.routes],
+            assigned_orders: this.lastResult.assigned_orders + newResult.assigned_orders,
+            total_orders: this.lastResult.total_orders, // Keep original total count, not the new one
+            total_distance: this.lastResult.total_distance + newResult.total_distance,
+            execution_time: this.lastResult.execution_time + newResult.execution_time
+          };
+        } else {
+          // Replace with new results (full optimization)
+          this.lastResult = newResult;
+        }
+        
+        // Update stats after optimization
+        await this.fetchStats();
         
         // Save optimization result to localStorage
         localStorage.setItem('lastOptimizationResult', JSON.stringify(this.lastResult));
@@ -383,15 +434,26 @@ export default {
       this.expandedRoutes = []
     },
     getAlgorithmDisplayName(algorithm) {
+      // Handle cases with additional optimization
+      if (algorithm.includes('дооптимизация')) {
+        const baseAlgorithm = algorithm.replace(' + дооптимизация', '');
+        const displayName = this.getBaseAlgorithmName(baseAlgorithm);
+        return `${displayName} + дооптимизация`;
+      }
+      
+      return this.getBaseAlgorithmName(algorithm);
+    },
+    getBaseAlgorithmName(algorithm) {
       switch (algorithm) {
         case 'nearest_neighbor':
           return 'Ближайший сосед (быстрый)'
         case 'or_tools':
           return 'Google OR-Tools (точный)'
         case 'genetic':
+        case 'genetic (remaining orders)':
           return 'Генетический алгоритм (эвристический)'
         default:
-          return 'Неизвестный алгоритм'
+          return algorithm || 'Неизвестный алгоритм'
       }
     }
   }
@@ -808,5 +870,40 @@ select {
 .btn-outline.small {
   padding: 6px 12px;
   font-size: 0.8rem;
+}
+
+.checkbox-help {
+  font-size: 0.85rem;
+  color: #666;
+  font-weight: normal;
+}
+
+.additional-info {
+  background-color: #f9f9f9;
+  border-radius: 4px;
+  padding: 15px;
+  margin-top: 10px;
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.info-icon {
+  font-size: 18px;
+  color: #42b983;
+}
+
+.info-content {
+  flex: 1;
+}
+
+.info-content strong {
+  font-weight: 500;
+}
+
+.info-content p {
+  margin-top: 8px;
+  margin-bottom: 0;
 }
 </style> 

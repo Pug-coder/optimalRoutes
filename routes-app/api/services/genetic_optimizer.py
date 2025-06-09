@@ -6,8 +6,44 @@ import uuid
 from datetime import datetime, timedelta
 import requests
 import time
+import logging
+import os
 
 from ..models import Location
+
+def get_osrm_logger(algorithm_name: str) -> logging.Logger:
+    """
+    Создает логгер для OSRM API с именем файла в зависимости от алгоритма.
+    
+    Args:
+        algorithm_name: Название алгоритма
+        
+    Returns:
+        Настроенный логгер
+    """
+    # Создаем директорию logs, если её нет
+    os.makedirs('logs', exist_ok=True)
+    
+    logger_name = f'osrm_api_{algorithm_name}'
+    logger = logging.getLogger(logger_name)
+    
+    # Проверяем, не настроен ли уже этот логгер
+    if not logger.handlers:
+        logger.setLevel(logging.INFO)
+        
+        # Создаем handler для записи в файл
+        filename = f'logs/osrm_{algorithm_name}.log'
+        handler = logging.FileHandler(filename)
+        handler.setLevel(logging.INFO)
+        
+        # Создаем formatter
+        formatter = logging.Formatter('%(asctime)s - %(message)s')
+        handler.setFormatter(formatter)
+        
+        # Добавляем handler к логгеру
+        logger.addHandler(handler)
+    
+    return logger
 
 
 class Individual:
@@ -231,7 +267,13 @@ class GeneticOptimizer:
                f"sources={source_indices}&destinations={dest_indices}")
         
         # Делаем запрос
+        start_time = time.time()
         response = requests.get(url)
+        end_time = time.time()
+        
+        # Логируем время запроса
+        osrm_logger = get_osrm_logger("genetic")
+        osrm_logger.info(f"OSRM API request time: {end_time - start_time:.3f} seconds")
         
         if response.status_code != 200:
             raise Exception(
@@ -277,7 +319,13 @@ class GeneticOptimizer:
         url = f"{self.osrm_api_url}{coords_str}"
         
         # Делаем запрос
+        start_time = time.time()
         response = requests.get(url)
+        end_time = time.time()
+        
+        # Логируем время запроса
+        osrm_logger = get_osrm_logger("genetic")
+        osrm_logger.info(f"OSRM API batch request time: {end_time - start_time:.3f} seconds")
         
         if response.status_code != 200:
             raise Exception(
@@ -1236,85 +1284,159 @@ class GeneticOptimizer:
         
         return individual
              
-    def optimize_routes(self) -> List[Dict[str, Any]]:
+    def optimize_routes(self, specific_orders: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """
         Solve the MDVRP problem using a genetic algorithm.
+        
+        Args:
+            specific_orders: Optional list of order IDs to optimize. 
+                           If None, optimizes all pending orders.
         
         Returns:
             List of optimized route dictionaries
         """
         print("Starting genetic algorithm optimization...")
         
-        # Initialize data
-        if not self._initialize_data():
-            print("Initialization failed, returning empty solution")
-            return []
+        # Если указаны конкретные заказы, фильтруем orders
+        if specific_orders is not None:
+            print(f"Optimizing specific orders: {len(specific_orders)} orders")
+            # Создаем временную копию orders только с нужными заказами
+            original_orders = self.orders.copy()
+            filtered_orders = {
+                order_id: order_data 
+                for order_id, order_data in self.orders.items() 
+                if order_id in specific_orders
+            }
+            self.orders = filtered_orders
+            print(f"Filtered orders: {len(self.orders)} out of {len(original_orders)}")
         
-        # Create initial population
-        population = self._create_initial_population()
-        print(f"Initial population created with {len(population)} individuals")
-        
-        # Track best solution
-        best_individual = min(population, key=lambda ind: ind.fitness)
-        print(f"Initial best fitness: {best_individual.fitness}")
-        
-        # Set timeout
-        start_time = datetime.now()
-        timeout = timedelta(seconds=self.timeout_seconds)
-        
-        # Main evolutionary loop
-        for generation in range(self.max_generations):
-            # Check timeout
-            if datetime.now() - start_time > timeout:
-                print(f"Timeout reached after {generation} generations")
-                break
-                
-            # Select parents for reproduction
-            parents = self._select_parents(population)
+        try:
+            # Initialize data
+            if not self._initialize_data():
+                print("Initialization failed, returning empty solution")
+                return []
             
-            # Create new population
-            new_population = []
+            # Create initial population
+            population = self._create_initial_population()
+            print(f"Initial population created with {len(population)} individuals")
             
-            # Elitism: Keep best individuals
-            elites_count = max(1, int(self.population_size * self.elitism_rate))
-            population.sort(key=lambda ind: ind.fitness)
-            new_population.extend(copy.deepcopy(population[:elites_count]))
+            # Track best solution
+            best_individual = min(population, key=lambda ind: ind.fitness)
+            print(f"Initial best fitness: {best_individual.fitness}")
             
-            # Crossover and mutation
-            for i in range(0, len(parents) - 1, 2):
-                if len(new_population) >= self.population_size:
+            # Set timeout
+            start_time = datetime.now()
+            timeout = timedelta(seconds=self.timeout_seconds)
+            
+            # Main evolutionary loop
+            for generation in range(self.max_generations):
+                # Check timeout
+                if datetime.now() - start_time > timeout:
+                    print(f"Timeout reached after {generation} generations")
                     break
                     
-                parent1 = parents[i]
-                parent2 = parents[i + 1] if i + 1 < len(parents) else parents[0]
+                # Select parents for reproduction
+                parents = self._select_parents(population)
                 
-                # Crossover
-                child1, child2 = self._crossover(parent1, parent2)
+                # Create new population
+                new_population = []
                 
-                # Mutation
-                child1 = self._mutate(child1)
-                child2 = self._mutate(child2)
+                # Elitism: Keep best individuals
+                elites_count = max(1, int(self.population_size * self.elitism_rate))
+                population.sort(key=lambda ind: ind.fitness)
+                new_population.extend(copy.deepcopy(population[:elites_count]))
                 
-                # Add to new population
-                new_population.append(child1)
-                if len(new_population) < self.population_size:
-                    new_population.append(child2)
+                # Crossover and mutation
+                for i in range(0, len(parents) - 1, 2):
+                    if len(new_population) >= self.population_size:
+                        break
+                        
+                    parent1 = parents[i]
+                    parent2 = parents[i + 1] if i + 1 < len(parents) else parents[0]
+                    
+                    # Crossover
+                    child1, child2 = self._crossover(parent1, parent2)
+                    
+                    # Mutation
+                    child1 = self._mutate(child1)
+                    child2 = self._mutate(child2)
+                    
+                    # Add to new population
+                    new_population.append(child1)
+                    if len(new_population) < self.population_size:
+                        new_population.append(child2)
+                
+                # Replace population
+                population = new_population
+                
+                # Update best solution
+                current_best = min(population, key=lambda ind: ind.fitness)
+                if current_best.fitness < best_individual.fitness:
+                    best_individual = copy.deepcopy(current_best)
+                    print(f"New best fitness at generation {generation}: "
+                          f"{best_individual.fitness}")
             
-            # Replace population
-            population = new_population
+            print(f"Genetic algorithm completed. "
+                  f"Best fitness: {best_individual.fitness}")
             
-            # Update best solution
-            current_best = min(population, key=lambda ind: ind.fitness)
-            if current_best.fitness < best_individual.fitness:
-                best_individual = copy.deepcopy(current_best)
-                print(f"New best fitness at generation {generation}: "
-                      f"{best_individual.fitness}")
+            # Return best routes
+            return best_individual.routes
+            
+        finally:
+            # Восстанавливаем исходные orders, если были отфильтрованы
+            if specific_orders is not None:
+                self.orders = original_orders
+
+    def get_unassigned_orders(self, existing_routes: List[Dict[str, Any]]) -> List[str]:
+        """
+        Get list of order IDs that are not assigned to any route.
         
-        print(f"Genetic algorithm completed. "
-              f"Best fitness: {best_individual.fitness}")
+        Args:
+            existing_routes: List of existing route dictionaries
+            
+        Returns:
+            List of unassigned order IDs
+        """
+        # Собираем все назначенные заказы
+        assigned_orders = set()
+        for route in existing_routes:
+            for point in route.get("points", []):
+                assigned_orders.add(point["order_id"])
         
-        # Return best routes
-        return best_individual.routes
+        # Находим все заказы со статусом "pending" или без статуса
+        all_pending_orders = set()
+        for order_id, order_data in self.orders.items():
+            status = order_data.get("status")
+            if status == "pending" or status is None:
+                all_pending_orders.add(order_id)
+        
+        # Возвращаем нераспределенные заказы
+        unassigned = list(all_pending_orders - assigned_orders)
+        
+        print(f"Found {len(unassigned)} unassigned orders out of {len(all_pending_orders)} total pending orders")
+        return unassigned
+
+    def optimize_remaining_orders(self, existing_routes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Optimize routes for orders that were not assigned in existing routes.
+        
+        Args:
+            existing_routes: List of existing route dictionaries
+            
+        Returns:
+            List of new route dictionaries for unassigned orders
+        """
+        # Получаем нераспределенные заказы
+        unassigned_orders = self.get_unassigned_orders(existing_routes)
+        
+        if not unassigned_orders:
+            print("No unassigned orders found, nothing to optimize")
+            return []
+        
+        print(f"Optimizing {len(unassigned_orders)} remaining orders")
+        
+        # Запускаем оптимизацию только для нераспределенных заказов
+        return self.optimize_routes(specific_orders=unassigned_orders)
 
     def reset(self):
         """Reset all optimizer data."""
